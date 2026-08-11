@@ -1,0 +1,372 @@
+import asyncio
+import json
+import time
+
+# load_dotenv() WAJIB dipanggil SEBELUM mengimpor adapters --
+# adapters.py membaca env var saat modul di-import, jadi kalau .env
+# belum di-load saat itu, env var tidak akan terbaca.
+from dotenv import load_dotenv
+load_dotenv()
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Header
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from ssh_proxy import run_ssh_bridge
+from adapters import DOMAIN_PROVIDERS
+import reservations
+from database import get_db_session
+from models import AuditLogModel
+from auth import (
+    authenticate, register_user, delete_user, list_registered_users,
+    require_user, get_session_info, get_profile, update_full_name, change_password,
+    get_user_role, require_engineer, init_auth_data
+)
+
+# Initialize database tables & seed data
+init_auth_data()
+
+app = FastAPI(title="O-RAN Control Dashboard API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten this before any real deployment
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+DOMAINS = DOMAIN_PROVIDERS  # {"core": {"oai": {...}, ...}, "ran": {...}, "ric": {...}}
+
+
+def log_audit(username: str, action: str, domain: str = None, component_id: str = None, detail: str = "", ip: str = ""):
+    """Helper to log security and system audit events to database."""
+    try:
+        with get_db_session() as db:
+            audit = AuditLogModel(
+                username=username,
+                action=action,
+                domain=domain,
+                component_id=component_id,
+                detail=detail,
+                ip_address=ip,
+                timestamp=time.time(),
+            )
+            db.add(audit)
+    except Exception as e:
+        print(f"[Audit Log Warning] Could not record audit log: {e}")
+
+
+class ReserveRequest(BaseModel):
+    user: str
+    start_at: float
+    end_at: float
+    note: str = ""
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    full_name: str = ""
+    username: str
+    password: str
+    role: str = "engineer"
+
+
+class ReleaseRequest(BaseModel):
+    user: str
+
+
+class UpdateProfileRequest(BaseModel):
+    full_name: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+def _get_adapter(domain: str, provider: str = None):
+    providers = DOMAINS.get(domain)
+    if not providers:
+        raise HTTPException(404, f"Unknown domain '{domain}'")
+    key = provider or next(iter(providers))  # default: provider pertama yang terdaftar
+    entry = providers.get(key)
+    if not entry:
+        raise HTTPException(404, f"Unknown provider '{key}' for domain '{domain}'")
+    return entry["adapter"]
+
+
+def _with_reservation(domain: str, component: dict) -> dict:
+    component = dict(component)
+    component["reservation"] = reservations.status(domain, component["id"])
+    return component
+
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/api/{domain}/providers")
+def list_providers(domain: str):
+    providers = DOMAINS.get(domain)
+    if not providers:
+        raise HTTPException(404, f"Unknown domain '{domain}'")
+    return [
+        {"key": key, "label": e["label"], "icon": e["icon"], "desc": e["desc"]}
+        for key, e in providers.items()
+    ]
+
+
+@app.post("/api/auth/login")
+def login(body: LoginRequest, request: Request):
+    client_ip = request.client.host if request.client else ""
+    token = authenticate(body.username, body.password, ip=client_ip)
+    if not token:
+        raise HTTPException(401, "invalid_credentials")
+    log_audit(body.username, "LOGIN", ip=client_ip)
+    return {"token": token, "user": body.username, "role": get_user_role(body.username)}
+
+
+@app.post("/api/auth/register")
+def register(body: RegisterRequest, request: Request):
+    try:
+        register_user(body.username, body.password, body.full_name, body.role)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    client_ip = request.client.host if request.client else ""
+    token = authenticate(body.username, body.password, ip=client_ip)
+    log_audit(body.username, "REGISTER", detail=f"Role: {body.role}", ip=client_ip)
+    return {"token": token, "user": body.username, "role": get_user_role(body.username)}
+
+
+@app.get("/api/auth/users")
+def get_users(current_user: str = Depends(require_user)):
+    return list_registered_users()
+
+
+@app.delete("/api/auth/users/{username}")
+def remove_user(username: str, current_user: str = Depends(require_user)):
+    if current_user != "admin" and get_user_role(current_user) != "admin":
+        raise HTTPException(403, "Only admin can delete user accounts.")
+    try:
+        delete_user(username)
+        log_audit(current_user, "DELETE_USER", detail=f"Deleted user @{username}")
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return {"deleted": username}
+
+
+@app.get("/api/audit-logs")
+def get_audit_logs(current_user: str = Depends(require_user)):
+    if current_user != "admin" and get_user_role(current_user) != "admin":
+        raise HTTPException(403, "Only admin can view audit logs.")
+    with get_db_session() as db:
+        logs = db.query(AuditLogModel).order_by(AuditLogModel.timestamp.desc()).limit(100).all()
+        return [l.to_dict() for l in logs]
+
+
+@app.get("/api/auth/session")
+def session_info(session: dict = Depends(get_session_info)):
+    return {
+        "user": session["user"],
+        "login_time": session["login_time"] * 1000,
+        "ip": session.get("ip", ""),
+        "remaining_seconds": max(0, int(session["expires_at"] - time.time())),
+    }
+
+
+@app.get("/api/auth/profile")
+def profile(current_user: str = Depends(require_user)):
+    return get_profile(current_user)
+
+
+@app.patch("/api/auth/profile")
+def update_profile(body: UpdateProfileRequest, current_user: str = Depends(require_user)):
+    try:
+        return update_full_name(current_user, body.full_name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/auth/change-password")
+def change_password_endpoint(body: ChangePasswordRequest, current_user: str = Depends(require_user)):
+    try:
+        change_password(current_user, body.current_password, body.new_password)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"changed": True}
+
+
+@app.get("/api/{domain}/components")
+def list_components(domain: str, provider: str = None):
+    adapter = _get_adapter(domain, provider)
+    return [_with_reservation(domain, c) for c in adapter.list()]
+
+
+@app.post("/api/{domain}/components/{comp_id}/restart")
+async def restart_component(
+    domain: str, comp_id: str, provider: str = None, authorization: str = Header(default="")
+):
+    current_user = require_user(authorization)
+    if get_user_role(current_user) not in ["engineer", "admin"]:
+        raise HTTPException(
+            403,
+            detail="Viewer role is not allowed to restart components."
+        )
+    adapter = _get_adapter(domain, provider)
+    result = await adapter.restart(comp_id)
+    if result is None:
+        raise HTTPException(404, f"Unknown component '{comp_id}' in domain '{domain}'")
+    log_audit(current_user, "RESTART_COMPONENT", domain=domain, component_id=comp_id)
+    return _with_reservation(domain, result)
+
+
+@app.get("/api/{domain}/components/{comp_id}/logs")
+def get_component_logs(domain: str, comp_id: str, provider: str = None, tail: int = 100):
+    adapter = _get_adapter(domain, provider)
+    if hasattr(adapter, "get_logs"):
+        logs = adapter.get_logs(comp_id, tail=tail)
+    else:
+        logs = f"Logs feature not supported by provider adapter for component '{comp_id}'."
+    return {"domain": domain, "component_id": comp_id, "tail": tail, "logs": logs}
+
+
+# ---- Reservation endpoints (scheduled time-slots) ----
+
+@app.get("/api/reservations/my")
+def get_my_reservations(user: str):
+    return reservations.my_reservations(user)
+
+
+@app.get("/api/reservations/all")
+def get_all_reservations():
+    return reservations.all_reservations()
+
+
+@app.get("/api/{domain}/components/{comp_id}/reservation")
+def get_reservation(domain: str, comp_id: str):
+    _get_adapter(domain)  # validates domain, raises 404 if unknown
+    return reservations.status(domain, comp_id)
+
+
+@app.post("/api/{domain}/components/{comp_id}/reservation")
+def create_reservation(domain: str, comp_id: str, body: ReserveRequest):
+    _get_adapter(domain)
+    if get_user_role(body.user) not in ["engineer", "admin"]:
+        raise HTTPException(
+            403,
+            detail={
+                "ok": False,
+                "reason": "viewer_permission_denied",
+                "message": "Viewer role is not allowed to create reservations.",
+            },
+        )
+    result = reservations.reserve(
+        domain, comp_id, body.user, body.start_at, body.end_at, body.note
+    )
+    if not result["ok"]:
+        raise HTTPException(409, detail=result)
+    log_audit(body.user, "CREATE_RESERVATION", domain=domain, component_id=comp_id, detail=f"Note: {body.note}")
+    return result["reservation"]
+
+
+@app.delete("/api/{domain}/components/{comp_id}/reservation/{reservation_id}")
+def cancel_reservation(domain: str, comp_id: str, reservation_id: str, user: str):
+    _get_adapter(domain)
+    result = reservations.cancel(domain, comp_id, user, reservation_id)
+    if not result["ok"]:
+        raise HTTPException(400, detail=result)
+    log_audit(user, "CANCEL_RESERVATION", domain=domain, component_id=comp_id, detail=f"Res ID: {reservation_id}")
+    return {"cancelled": True}
+
+
+@app.websocket("/ws/ssh/{domain}/{comp_id}")
+async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
+    await ws.accept()
+
+    if domain not in DOMAINS:
+        await ws.send_text(f"\r\n[unknown domain '{domain}']\r\n")
+        await ws.close()
+        return
+
+    try:
+        adapter = _get_adapter(domain)  # default provider
+    except HTTPException:
+        await ws.send_text(f"\r\n[domain '{domain}' has no adapter]\r\n")
+        await ws.close()
+        return
+
+    component = adapter.get(comp_id)
+    if not component or not component.get("host"):
+        await ws.send_text("\r\n[component has no SSH host configured]\r\n")
+        await ws.close()
+        return
+
+    try:
+        init_raw = await ws.receive_text()
+        init = json.loads(init_raw)
+    except Exception:
+        await ws.send_text("\r\n[invalid initial payload]\r\n")
+        await ws.close()
+        return
+
+    dashboard_user = init.get("user", "")
+    active_reservation = reservations.get_active_reservation(domain, comp_id, dashboard_user)
+    if not active_reservation:
+        await ws.send_text(
+            "\r\n[access denied: no active reservation found for your user during the current time slot.]\r\n"
+        )
+        await ws.close()
+        return
+
+    await run_ssh_bridge(
+        ws,
+        host=component["host"],
+        port=int(init.get("port", 22)),
+        username=init.get("ssh_username", ""),
+        password=init.get("ssh_password", ""),
+    )
+
+# ---- Telemetry ----
+
+@app.websocket("/ws/telemetry")
+async def telemetry_ws(ws: WebSocket):
+    """
+    Pushes a full snapshot of Core/RAN/RIC state every 3s, including
+    each component's current reservation status.
+    Swap the sleep+jitter loop for a real subscription (e.g. T-Tracer
+    stream, E2 indication messages) when you wire this to a live testbed.
+    """
+    await ws.accept()
+    try:
+        while True:
+            # Live telemetry cuma untuk provider default (pertama terdaftar)
+            # di tiap domain -- provider lain diambil manual lewat REST saat
+            # tab-nya dipilih di frontend.
+            default_adapters = {
+                domain: next(iter(providers.values()))["adapter"]
+                for domain, providers in DOMAINS.items()
+            }
+            for adapter in default_adapters.values():
+                if random_tick():
+                    adapter.jitter_health()
+
+            snapshot = {
+                domain: [_with_reservation(domain, c) for c in adapter.list()]
+                for domain, adapter in default_adapters.items()
+            }
+            await ws.send_text(json.dumps(snapshot))
+            await asyncio.sleep(3)
+    except (WebSocketDisconnect, RuntimeError, ConnectionResetError, Exception):
+        pass
+
+
+def random_tick(p: float = 0.3) -> bool:
+    import random
+    return random.random() < p
+
+
+# Run with: uvicorn main:app --reload --port 8000

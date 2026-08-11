@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+  vertical-align: middle;
+}
+
+.sidebar-item-active {
+  color: #003d9b;
+  font-weight: 700;
+}
+
+.topology-line {
+  stroke: #c3c6d6;
+  stroke-dasharray: 4;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-travel {
+    animation: none;
+    left: 40%;
+  }
+  .animate-dash {
+    animation: none;
+  }
+}
+
+.bg-mesh {
+  background-color: #faf9ff;
+  background-image:
+    radial-gradient(at 0% 0%, hsla(225, 100%, 94%, 1) 0, transparent 50%),
+    radial-gradient(at 50% 0%, hsla(225, 100%, 92%, 1) 0, transparent 50%),
+    radial-gradient(at 100% 0%, hsla(225, 100%, 94%, 1) 0, transparent 50%);
+}

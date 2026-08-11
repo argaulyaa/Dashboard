@@ -1,0 +1,372 @@
+import React, { useState, useEffect } from "react";
+import { fetchProviders, fetchComponents } from "../api.js";
+import { getRole } from "../user.js";
+import LogsModal from "../components/LogsModal.jsx";
+
+const STATUS_META = {
+  healthy: { label: "Active", dot: "bg-secondary", text: "text-secondary", pulse: true },
+  degraded: { label: "Degraded", dot: "bg-tertiary", text: "text-tertiary", pulse: false },
+  down: { label: "Critical", dot: "bg-error", text: "text-error", pulse: false },
+  restarting: { label: "Restarting", dot: "bg-primary", text: "text-primary", pulse: true },
+};
+
+function formatUptime(seconds) {
+  if (!seconds || seconds < 0) return "-";
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${d}d ${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m`;
+}
+
+// Ilustrasi "Coverage Map" -- pengganti foto AI-generated di mockup (yang di-hotlink
+// dari URL luar). Ini SVG statis, murni dekoratif, tidak terikat data asli.
+function CoverageMapArt() {
+  return (
+    <svg className="absolute inset-0 w-full h-full" viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice">
+      <rect width="300" height="200" fill="#e9edff" />
+      {Array.from({ length: 10 }).map((_, row) =>
+        Array.from({ length: 15 }).map((_, col) => (
+          <circle key={`${row}-${col}`} cx={col * 20 + 10} cy={row * 20 + 10} r="1.2" fill="#c3c6d6" />
+        ))
+      )}
+      <circle cx="90" cy="70" r="26" fill="#82f9be" opacity="0.35" />
+      <circle cx="90" cy="70" r="7" fill="#006c47" />
+      <circle cx="190" cy="120" r="34" fill="#b2c5ff" opacity="0.35" />
+      <circle cx="190" cy="120" r="7" fill="#003d9b" />
+      <circle cx="230" cy="50" r="18" fill="#82f9be" opacity="0.3" />
+      <circle cx="230" cy="50" r="5" fill="#006c47" />
+      <line x1="90" y1="70" x2="190" y2="120" stroke="#0c56d0" strokeDasharray="3 3" strokeWidth="1" />
+      <line x1="190" y1="120" x2="230" y2="50" stroke="#0c56d0" strokeDasharray="3 3" strokeWidth="1" />
+    </svg>
+  );
+}
+
+export default function RanPage({ components, currentUser, onSelect, onRestart }) {
+  const [providers, setProviders] = useState([]);
+  const [activeProvider, setActiveProvider] = useState(null);
+  const [providerComponents, setProviderComponents] = useState(null);
+  const [restartingId, setRestartingId] = useState(null);
+  const [logTarget, setLogTarget] = useState(null);
+
+  // Fetch daftar provider dari backend (data-driven, sama pola CorePage.jsx)
+  useEffect(() => {
+    fetchProviders("ran")
+      .then((list) => {
+        setProviders(list);
+        if (list.length) setActiveProvider(list[0].key);
+      })
+      .catch(() => setProviders([]));
+  }, []);
+
+  // Provider pertama = data live dari WebSocket (prop `components`).
+  // Provider lain = fetch sekali via REST saat tab diklik.
+  const isDefaultProvider = providers[0]?.key === activeProvider;
+
+  useEffect(() => {
+    if (!activeProvider || isDefaultProvider) {
+      setProviderComponents(null);
+      return;
+    }
+    fetchComponents("ran", activeProvider)
+      .then(setProviderComponents)
+      .catch(() => setProviderComponents([]));
+  }, [activeProvider, isDefaultProvider]);
+
+  const activeMeta = providers.find((p) => p.key === activeProvider);
+  const displayedComponents = isDefaultProvider ? components : (providerComponents || []);
+
+  // "Hero" node = gNB-1, mewakili node gNB utama yang ditonjolkan di card.
+  const hero = displayedComponents.find((c) => c.id === "gnb-1") || displayedComponents[0];
+
+  const handleRestartRow = async (id) => {
+    setRestartingId(id);
+    try {
+      await onRestart("ran", id);
+    } finally {
+      setRestartingId(null);
+    }
+  };
+
+  return (
+    <div className="max-w-[1600px] mx-auto">
+      {/* Page Header */}
+      <div className="mb-8">
+        <h2 className="font-headline-lg text-headline-lg text-on-surface tracking-tight">Radio Access Network</h2>
+        <p className="text-on-surface-variant mt-1">Monitor and configure gNodeB instances across distributed sites.</p>
+      </div>
+
+      {/* Provider Tabs */}
+      {providers.length > 1 && (
+        <div className="flex items-center gap-8 border-b border-outline-variant mb-8 overflow-x-auto whitespace-nowrap">
+          {providers.map((p) => {
+            const active = p.key === activeProvider;
+            const count = p.key === providers[0]?.key ? displayedComponents.length : null;
+            return (
+              <button
+                key={p.key}
+                onClick={() => setActiveProvider(p.key)}
+                className={`px-1 py-4 border-b-2 flex items-center gap-2 transition-colors font-medium ${
+                  active ? "border-primary text-primary font-bold" : "border-transparent text-on-surface-variant hover:text-on-surface"
+                }`}
+              >
+                <span className="material-symbols-outlined">{p.icon}</span>
+                {p.label}
+                {count !== null && (
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                      active ? "bg-primary/10 text-primary" : "bg-surface-container text-on-surface-variant"
+                    }`}
+                  >
+                    {String(count).padStart(2, "0")}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Provider content */}
+      {activeProvider && !isDefaultProvider ? (
+        <div className="bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant p-10 text-center text-on-surface-variant">
+          <span className="material-symbols-outlined text-4xl mb-2 block">construction</span>
+          <p className="font-bold mb-1">{activeMeta?.label}</p>
+          <p className="text-sm">
+            Adapter <code>{activeProvider}</code> is not connected to backend yet.
+            This tab will become active once the corresponding adapter is added in{" "}
+            <code>backend/adapters.py</code>.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-12 gap-6">
+          {/* Main Status Card (Featured) */}
+          <div className="col-span-12 lg:col-span-8 bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-outline-variant flex justify-between items-center">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-secondary-container/30 rounded-xl flex items-center justify-center text-secondary">
+                  <span className="material-symbols-outlined text-[32px]">satellite_alt</span>
+                </div>
+                <div>
+                  <h3 className="text-title-lg font-bold">{hero?.name || "-"}</h3>
+                  <p className="text-xs text-on-surface-variant">
+                    {hero?.kind} • Host: {hero?.host || "-"}
+                  </p>
+                </div>
+              </div>
+              <span
+                className={`flex items-center gap-1.5 px-3 py-1 text-label-sm rounded-full ${
+                  STATUS_META[hero?.status]?.text ?? "text-on-surface-variant"
+                } bg-secondary-container/20`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${STATUS_META[hero?.status]?.dot ?? "bg-outline"}`} />
+                {STATUS_META[hero?.status]?.label ?? hero?.status}
+              </span>
+            </div>
+
+            <div className="p-6 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-6">
+              <div className="space-y-6">
+                <div className="h-12 flex flex-col justify-center gap-2">
+                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Implementation</p>
+                  <p className="text-on-surface text-body-md font-bold">OAI Softmodem</p>
+                </div>
+                <div className="h-12 flex flex-col justify-center gap-2">
+                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Architecture</p>
+                  <p className="text-on-surface text-body-md font-bold">CU/DU Split</p>
+                </div>
+                <div className="h-12 flex flex-col justify-center gap-2">
+                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Interface</p>
+                  <p className="text-primary text-body-md font-bold">F1-C / F1-U</p>
+                </div>
+              </div>
+              <div className="space-y-6">
+                <div className="h-12 flex flex-col justify-center gap-2">
+                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Latency</p>
+                  <p className="text-secondary text-body-md font-bold">{hero?.latency_ms ?? "-"}ms</p>
+                </div>
+                <div className="h-12 flex flex-col justify-center gap-2">
+                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Uptime</p>
+                  <p className="text-on-surface text-body-md font-bold">{formatUptime(hero?.uptime_seconds)}</p>
+                </div>
+                <div className="h-12 flex flex-col justify-center gap-2">
+                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Active UEs</p>
+                  <p className="text-on-surface text-body-md font-bold">{hero?.active_ues ?? 0}</p>
+                </div>
+              </div>
+              <div className="space-y-6">
+                <div className="h-12 flex flex-col justify-center gap-2">
+                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">CPU</p>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-1.5 bg-surface-container rounded-full overflow-hidden">
+                      <div className="h-full bg-primary" style={{ width: `${hero?.cpu_pct ?? 0}%` }} />
+                    </div>
+                    <span className="text-on-surface text-body-md font-bold">{hero?.cpu_pct ?? 0}%</span>
+                  </div>
+                </div>
+                <div className="h-12 flex flex-col justify-center gap-2">
+                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Memory</p>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-1.5 bg-surface-container rounded-full overflow-hidden">
+                      <div className="h-full bg-tertiary" style={{ width: `${hero?.mem_pct ?? 0}%` }} />
+                    </div>
+                    <span className="text-on-surface text-body-md font-bold">{hero?.mem_gb ?? 0}GB</span>
+                  </div>
+                </div>
+                <div className="h-12 flex flex-col justify-center gap-2">
+                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Status detail</p>
+                  <p className="text-on-surface text-body-md font-bold">{hero?.detail || "-"}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-auto p-6 bg-surface-container-low flex justify-between items-center">
+              <div className="flex -space-x-2">
+                {["CU", "DU", "RU"].map((label) => (
+                  <div
+                    key={label}
+                    className="w-8 h-8 rounded-full border-2 border-white bg-surface-dim flex items-center justify-center text-[10px] font-bold"
+                    title={label === "RU" ? "RU not monitored by backend yet" : undefined}
+                  >
+                    {label}
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  className="px-6 py-2.5 border border-outline-variant text-on-surface font-bold text-label-lg rounded-lg hover:bg-surface-container-highest transition-colors flex items-center gap-2"
+                  onClick={() => hero && setLogTarget({ domain: "ran", compId: hero.id, compName: hero.name })}
+                >
+                  <span className="material-symbols-outlined text-lg">subject</span>
+                  View Logs
+                </button>
+                {getRole() !== "viewer" && (
+                  <button
+                    className="px-6 py-2.5 bg-primary text-white font-bold rounded-lg shadow-md hover:brightness-110 active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={() => hero && onSelect(hero)}
+                    disabled={!hero?.host}
+                  >
+                    <span className="material-symbols-outlined text-lg">terminal</span>
+                    Console
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {logTarget && (
+            <LogsModal
+              domain={logTarget.domain}
+              compId={logTarget.compId}
+              compName={logTarget.compName}
+              onClose={() => setLogTarget(null)}
+            />
+          )}
+
+          {/* Coverage Map Card */}
+          <div className="col-span-12 lg:col-span-4 bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant p-6 flex flex-col">
+            <h3 className="text-title-md font-bold mb-4">Coverage Map</h3>
+            <div className="flex-1 rounded-lg bg-surface-container overflow-hidden relative min-h-[240px]">
+              <CoverageMapArt />
+              <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur p-2 rounded-lg text-[10px] font-bold shadow-sm">
+                <p className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-secondary" />
+                  Optimal Coverage
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="text-body-md text-on-surface-variant">FR1 (Sub-6GHz)</span>
+                <span className="px-2 py-0.5 bg-secondary-container/30 text-secondary text-[10px] font-bold rounded">ENABLED</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-body-md text-on-surface-variant">FR2 (mmWave)</span>
+                <span className="px-2 py-0.5 bg-surface-container text-outline text-[10px] font-bold rounded">DISABLED</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Node List Table */}
+          <div className="col-span-12 bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant overflow-hidden">
+            <div className="p-6 border-b border-outline-variant flex justify-between items-center">
+              <h3 className="text-title-md font-bold">Deployment Inventory</h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-surface-container-low">
+                  <tr>
+                    <th className="px-6 py-3 text-label-sm font-bold text-outline uppercase tracking-widest">Node Instance</th>
+                    <th className="px-6 py-3 text-label-sm font-bold text-outline uppercase tracking-widest">Type</th>
+                    <th className="px-6 py-3 text-label-sm font-bold text-outline uppercase tracking-widest">IP Address</th>
+                    <th className="px-6 py-3 text-label-sm font-bold text-outline uppercase tracking-widest">Load</th>
+                    <th className="px-6 py-3 text-label-sm font-bold text-outline uppercase tracking-widest">Status</th>
+                    <th className="px-6 py-3 text-label-sm font-bold text-outline uppercase tracking-widest">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-outline-variant">
+                  {components.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-6 text-center text-on-surface-variant text-xs font-mono">
+                        No component data available.
+                      </td>
+                    </tr>
+                  )}
+                  {components.map((c) => {
+                    const meta = STATUS_META[c.status] ?? { label: c.status, dot: "bg-outline", text: "text-on-surface-variant" };
+                    const isDown = c.status === "down";
+                    return (
+                      <tr key={c.id} className="hover:bg-surface-container-lowest transition-colors h-14">
+                        <td className="px-6 py-4 cursor-pointer" onClick={() => onSelect(c)}>
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={`w-8 h-8 rounded flex items-center justify-center ${
+                                isDown ? "bg-error-container/10 text-error" : "bg-primary-container/10 text-primary"
+                              }`}
+                            >
+                              <span className="material-symbols-outlined text-[18px]">
+                                {isDown ? "report_problem" : "router"}
+                              </span>
+                            </div>
+                            <span className="font-bold text-body-md">{c.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-body-md">{c.kind}</td>
+                        <td className="px-6 py-4 font-mono text-xs">{c.host || "-"}</td>
+                        <td className="px-6 py-4">
+                          <div className="w-24 h-1 bg-surface-container rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${isDown ? "bg-error" : "bg-secondary"}`}
+                              style={{ width: `${c.cpu_pct ?? 0}%` }}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`flex items-center gap-1.5 text-label-sm font-bold ${meta.text}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${meta.dot} ${meta.pulse ? "animate-pulse" : ""}`} />
+                            {meta.label}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <button
+                            className="text-primary hover:underline font-bold text-label-sm disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed"
+                            onClick={() => handleRestartRow(c.id)}
+                            disabled={restartingId === c.id || c.status === "restarting"}
+                          >
+                            {restartingId === c.id || c.status === "restarting"
+                              ? "..."
+                              : isDown
+                              ? "Recover"
+                              : "Manage"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

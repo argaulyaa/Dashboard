@@ -1,0 +1,468 @@
+import React, { useMemo, useState, useEffect } from "react";
+import { fetchProviders, fetchComponents } from "../api.js";
+import { getRole } from "../user.js";
+import LogsModal from "../components/LogsModal.jsx";
+
+
+
+const XAPP_KIND = "near-RT RIC xApp";
+
+// Ikon per xApp, biar tidak semua pakai ikon generik yang sama.
+const XAPP_ICON = {
+  "xapp-kpimon": "monitoring",
+  "xapp-anomaly": "troubleshoot",
+  "xapp-healer": "healing",
+};
+
+// Data referensi Service Model E2 -- ini spesifikasi standar O-RAN, bukan
+// telemetry per-instance, jadi wajar tetap statis sampai ada endpoint nyata
+// (misalnya /api/ric/service-models kalau nanti disambungkan ke FlexRIC SDK).
+const SERVICE_MODELS = [
+  { id: "E2SM-KPM", version: "v2.03", nodes: "2 Nodes", active: true },
+  { id: "E2SM-RC", version: "v1.01", nodes: "2 Nodes", active: true },
+  { id: "E2SM-MAC", version: "v1.00", nodes: "1 Node", active: true },
+  { id: "E2SM-RLC", version: "v1.00", nodes: "1 Node", active: true },
+  { id: "E2SM-GTP", version: "v2.00", nodes: "0 Nodes", active: false },
+];
+
+const STATUS_LABEL = {
+  healthy: "Healthy",
+  degraded: "Degraded",
+  down: "Down",
+  restarting: "Restarting...",
+};
+
+const STATUS_PILL = {
+  healthy: "bg-secondary-container text-on-secondary-container",
+  degraded: "bg-tertiary-container text-on-tertiary-container",
+  down: "bg-error-container text-on-error-container",
+  restarting: "bg-primary-container text-white",
+};
+
+const RAN_NODE_RING = {
+  healthy: "border-primary",
+  degraded: "border-tertiary",
+  down: "border-outline opacity-60",
+  restarting: "border-primary animate-pulse",
+};
+
+const RAN_NODE_TEXT = {
+  healthy: "text-secondary",
+  degraded: "text-tertiary",
+  down: "text-on-surface-variant",
+  restarting: "text-primary",
+};
+
+function formatClock(ts) {
+  if (!ts) return "--:--:--";
+  return new Date(ts * 1000).toLocaleTimeString("id-ID", { hour12: false });
+}
+
+export default function RicPage({ components, ranComponents = [], currentUser, onSelect, onRestart }) {
+  const [providers, setProviders] = useState([]);
+  const [activeProvider, setActiveProvider] = useState(null);
+  const [providerComponents, setProviderComponents] = useState(null);
+  const [restartingId, setRestartingId] = useState(null);
+  const [logTarget, setLogTarget] = useState(null);
+
+  // Fetch daftar provider dari backend (data-driven, sama pola CorePage & RanPage)
+  useEffect(() => {
+    fetchProviders("ric")
+      .then((list) => {
+        setProviders(list);
+        if (list.length) setActiveProvider(list[0].key);
+      })
+      .catch(() => setProviders([]));
+  }, []);
+
+  // Provider pertama = live dari WebSocket (prop `components`).
+  // Jika activeProvider null/belum di-load, anggap default provider (true).
+  const isDefaultProvider = !activeProvider || !providers.length || providers[0]?.key === activeProvider;
+
+  useEffect(() => {
+    if (!activeProvider || isDefaultProvider) {
+      setProviderComponents(null);
+      return;
+    }
+    fetchComponents("ric", activeProvider)
+      .then(setProviderComponents)
+      .catch(() => setProviderComponents([]));
+  }, [activeProvider, isDefaultProvider]);
+
+  const activeMeta = providers.find((p) => p.key === activeProvider) || providers[0] || { label: "FlexRIC", icon: "memory", desc: "FlexRIC near-RT RIC & xApps" };
+  const displayedComponents = isDefaultProvider ? components : (providerComponents || []);
+
+  const xapps = displayedComponents.filter((c) => c.kind === XAPP_KIND);
+  // "non-RT RIC" mewakili controller secara keseluruhan di kartu utama
+  const hero = displayedComponents.find((c) => c.id === "nonrt-ric") || displayedComponents[0];
+
+  const heroStatus = hero?.status || "healthy";
+  const heroView = {
+    cpuPct: hero?.cpu_pct ?? 0,
+    memGb: hero?.mem_gb ?? 0,
+    latencyMs: hero?.latency_ms ?? 0,
+  };
+
+  // Log semu dibangun dari data komponen ASLI (status + detail + last_updated),
+  // bukan endpoint log sungguhan -- backend belum punya stream log/event.
+  const logLines = useMemo(() => {
+    return [...displayedComponents]
+      .sort((a, b) => (b.last_updated || 0) - (a.last_updated || 0))
+      .slice(0, 8)
+      .map((c, i) => ({
+        key: `${c.id}-${i}`,
+        time: formatClock(c.last_updated),
+        level: c.status === "down" ? "ERROR" : c.status === "degraded" ? "WARN" : "INFO",
+        text: `${c.name}: ${c.detail || "no detail"}`,
+      }));
+  }, [displayedComponents]);
+
+  const handleRestartRow = async (id) => {
+    setRestartingId(id);
+    try {
+      await onRestart("ric", id);
+    } finally {
+      setRestartingId(null);
+    }
+  };
+
+  return (
+    <div className="max-w-[1600px] mx-auto">
+      {/* Page Header + provider tabs */}
+      <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div>
+          <h2 className="text-headline-md font-headline-md text-on-surface mb-2">RIC Management</h2>
+          <p className="text-on-surface-variant">
+            RAN Intelligent Controller configuration and xApp orchestration
+          </p>
+        </div>
+        {/* Provider tabs — dirender hanya jika ada lebih dari 1 provider */}
+        {providers.length > 1 && (
+          <div className="flex p-1 bg-surface-container-high rounded-xl w-fit">
+            {providers.map((p) => (
+              <button
+                key={p.key}
+                onClick={() => setActiveProvider(p.key)}
+                className={`px-6 py-2 rounded-lg font-bold text-sm transition-colors ${
+                  p.key === (activeProvider || providers[0]?.key)
+                    ? "bg-surface text-primary shadow-sm"
+                    : "text-on-surface-variant hover:text-primary"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Content: placeholder if not default, bento grid if default */}
+      {activeProvider && !isDefaultProvider ? (
+        <div className="bg-white rounded-xl border border-outline-variant p-10 text-center text-on-surface-variant">
+          <span className="material-symbols-outlined text-4xl mb-2 block">construction</span>
+          <p className="font-bold mb-1">{activeMeta?.label}</p>
+          <p className="text-sm">
+            Adapter <code>{activeProvider}</code> is not connected to backend yet.
+          </p>
+        </div>
+      ) : (
+      <div className="grid grid-cols-12 gap-6">
+        {/* Main Status Card */}
+        <div className="col-span-12 lg:col-span-8 bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-[0_4px_12px_rgba(0,0,0,0.06)]">
+          <div className="flex justify-between items-start mb-6">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center">
+                <span
+                  className="material-symbols-outlined text-white"
+                  style={{ fontVariationSettings: "'FILL' 1" }}
+                >
+                  {activeMeta?.icon || "memory"}
+                </span>
+              </div>
+              <div>
+                <h3 className="text-title-lg font-title-lg">{activeMeta?.label || "RIC"}</h3>
+                <div className="flex items-center gap-2 mt-1">
+                  <span
+                    className={`flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full ${
+                      STATUS_PILL[heroStatus] ?? "bg-surface-container text-on-surface-variant"
+                    }`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                    {STATUS_LABEL[heroStatus] ?? heroStatus}
+                  </span>
+                  <span className="text-xs text-on-surface-variant">{activeMeta?.desc || ""}</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8">
+            <MetricTile label="CPU Utilization" value={`${heroView.cpuPct}%`} pct={heroView.cpuPct} />
+            <MetricTile
+              label="Memory Usage"
+              value={`${heroView.memGb} GB`}
+              pct={Math.min(100, heroView.memGb * 10)}
+            />
+            <MetricTile
+              label="Latency (E2)"
+              value={`${heroView.latencyMs}ms`}
+              pct={Math.min(100, heroView.latencyMs * 10)}
+            />
+          </div>
+
+          <div className="mt-6 flex justify-end items-center gap-3">
+            <button
+              className="flex items-center gap-2 px-6 py-2.5 border border-outline-variant text-on-surface rounded-lg hover:bg-surface-container transition-colors font-bold text-sm"
+              onClick={() => hero && setLogTarget({ domain: "ric", compId: hero.id, compName: hero.name })}
+            >
+              <span className="material-symbols-outlined text-lg">subject</span>
+              View Logs
+            </button>
+            {getRole() !== "viewer" && (
+              hero?.host ? (
+                <button
+                  className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-container transition-colors font-bold text-sm shadow-md active:scale-95 transition-all"
+                  onClick={() => onSelect(hero)}
+                >
+                  <span className="material-symbols-outlined text-lg">terminal</span>
+                  Console
+                </button>
+              ) : (
+                <span
+                  className="text-xs text-on-surface-variant italic px-2 py-1"
+                  title="This component has no host configured for console access"
+                >
+                  No Console Access
+                </span>
+              )
+            )}
+          </div>
+        </div>
+
+        {logTarget && (
+          <LogsModal
+            domain={logTarget.domain}
+            compId={logTarget.compId}
+            compName={logTarget.compName}
+            onClose={() => setLogTarget(null)}
+          />
+        )}
+
+        {/* Active xApps Card */}
+        <div className="col-span-12 lg:col-span-4 bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden flex flex-col shadow-[0_4px_12px_rgba(0,0,0,0.06)]">
+          <div className="p-4 border-b border-outline-variant flex justify-between items-center">
+            <h3 className="text-title-md font-title-md">Active xApps</h3>
+            <span className="text-xs font-bold text-primary">{xapps.length} TOTAL</span>
+          </div>
+          <div className="flex-1 p-4 space-y-3">
+            {xapps.length === 0 && (
+              <div className="text-on-surface-variant text-xs font-mono py-3">No xApps registered.</div>
+            )}
+            {xapps.map((x) => (
+              <button
+                key={x.id}
+                onClick={() => onSelect(x)}
+                className="w-full flex items-center justify-between p-3 bg-surface rounded-lg border border-outline-variant/50 hover:bg-surface-container-low transition-colors text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-primary">{XAPP_ICON[x.id] ?? "extension"}</span>
+                  <span className="text-sm font-medium">{x.name}</span>
+                </div>
+                <span
+                  className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                    STATUS_PILL[x.status] ?? "bg-surface-container-high text-on-surface-variant"
+                  }`}
+                >
+                  {(STATUS_LABEL[x.status] ?? x.status).toUpperCase()}
+                </span>
+              </button>
+            ))}
+          </div>
+          <button
+            className="w-full py-3 bg-surface-container-low text-primary text-xs font-bold hover:bg-surface-container transition-colors"
+            onClick={() => hero && onSelect(hero)}
+          >
+            MANAGE xAPPS
+          </button>
+        </div>
+
+        {/* Live Telemetry Event Stream */}
+        <div className="col-span-12 bg-surface-container-lowest border border-outline-variant rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)]">
+          <div className="p-4 border-b border-outline-variant flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary">sensors</span>
+              <h3 className="text-title-md font-title-md">Live Telemetry Event Stream</h3>
+            </div>
+            <div className="text-[10px] font-mono text-on-surface-variant bg-surface-container-low px-2 py-0.5 rounded">
+              WEBSOCKET STREAM (/ws/telemetry)
+            </div>
+          </div>
+          <div className="p-4 font-mono text-code-md h-64 overflow-y-auto bg-inverse-surface text-surface-container-low rounded-b-xl">
+            <div className="space-y-1">
+              {logLines.length === 0 && <p className="opacity-60">No data available.</p>}
+              {logLines.map((l) => (
+                <p
+                  key={l.key}
+                  className={
+                    l.level === "WARN"
+                      ? "text-tertiary-fixed"
+                      : l.level === "ERROR"
+                      ? "text-error-container"
+                      : "opacity-80"
+                  }
+                >
+                  <span className="text-secondary-fixed-dim">[{l.time}]</span> {l.level}: {l.text}
+                </p>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* E2 Node Topology */}
+        <div className="col-span-12 lg:col-span-7 bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-[0_4px_12px_rgba(0,0,0,0.06)] min-h-[400px] flex flex-col">
+          <div className="mb-6">
+            <h3 className="text-title-md font-title-md">E2 Node Topology</h3>
+            <p className="text-xs text-on-surface-variant">Connected Radio Nodes and Service Models</p>
+          </div>
+          <div className="flex-1 relative bg-surface-container/30 rounded-lg overflow-hidden border border-outline-variant/30 flex items-center justify-center">
+            <div className="absolute inset-0 pointer-events-none opacity-20">
+              <div
+                className="absolute top-0 left-0 w-full h-full"
+                style={{ backgroundImage: "radial-gradient(#0c56d0 1px, transparent 1px)", backgroundSize: "20px 20px" }}
+              />
+            </div>
+            <div className="relative flex flex-col items-center gap-16">
+              <div className="relative">
+                <div className="w-24 h-24 bg-primary text-white rounded-2xl flex flex-col items-center justify-center shadow-lg z-10 relative">
+                  <span className="material-symbols-outlined text-3xl">hub</span>
+                  <span className="text-[10px] font-bold mt-1">RIC</span>
+                </div>
+                <div className="absolute inset-0 bg-primary/20 rounded-2xl animate-ping" />
+              </div>
+              <div className="flex gap-12 flex-wrap justify-center">
+                {ranComponents.length === 0 && (
+                  <p className="text-xs text-on-surface-variant">No RAN nodes available.</p>
+                )}
+                {ranComponents.map((n) => (
+                  <div key={n.id} className="flex flex-col items-center gap-3">
+                    <div
+                      className={`w-16 h-16 bg-surface-container-highest border-2 rounded-full flex items-center justify-center shadow ${
+                        RAN_NODE_RING[n.status] ?? "border-outline"
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-primary">settings_input_antenna</span>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs font-bold">{n.name}</p>
+                      <p className={`text-[10px] font-bold ${RAN_NODE_TEXT[n.status] ?? "text-on-surface-variant"}`}>
+                        {(STATUS_LABEL[n.status] ?? n.status).toUpperCase()}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Service Models */}
+        <div className="col-span-12 lg:col-span-5 bg-surface-container-lowest border border-outline-variant rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] flex flex-col">
+          <div className="p-4 border-b border-outline-variant">
+            <h3 className="text-title-md font-title-md">Registered Service Models</h3>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <table className="w-full text-left">
+              <thead className="bg-surface-container-low sticky top-0">
+                <tr>
+                  <th className="px-4 py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Model ID</th>
+                  <th className="px-4 py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Version</th>
+                  <th className="px-4 py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Nodes</th>
+                  <th className="px-4 py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/30">
+                {SERVICE_MODELS.map((m) => (
+                  <tr key={m.id}>
+                    <td className="px-4 py-4 text-sm font-medium">{m.id}</td>
+                    <td className="px-4 py-4 text-xs font-mono">{m.version}</td>
+                    <td className="px-4 py-4 text-xs">{m.nodes}</td>
+                    <td className="px-4 py-4 text-xs">
+                      <span className={m.active ? "text-secondary font-bold" : "text-on-surface-variant"}>
+                        {m.active ? "READY" : "INACTIVE"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Full xApp / Component Table */}
+        <div className="col-span-12 bg-surface-container-lowest border border-outline-variant rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] overflow-hidden">
+          <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center">
+            <h4 className="text-sm font-bold">All RIC Components</h4>
+            <span className="text-xs bg-surface-container px-2 py-1 rounded">
+              {components.filter((c) => c.status !== "down").length} / {components.length} healthy
+            </span>
+          </div>
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-surface-container-low text-[11px] uppercase tracking-wider font-bold text-on-surface-variant">
+                <th className="px-6 py-3">Component Name</th>
+                <th className="px-6 py-3">Status</th>
+                <th className="px-6 py-3">Details</th>
+                <th className="px-6 py-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="text-sm divide-y divide-outline-variant">
+              {components.map((c) => (
+                <tr key={c.id} className="hover:bg-surface-container-low">
+                  <td className="px-6 py-4 font-medium cursor-pointer" onClick={() => onSelect(c)}>
+                    {c.name} <span className="text-on-surface-variant font-normal">({c.kind})</span>
+                    {c.reservation && (
+                      <span className="ml-1.5 text-xs" title={`Reserved by ${c.reservation.user}`}>
+                        🔒
+                      </span>
+                    )}
+                  </td>
+                  <td className={`px-6 py-4 text-xs font-bold ${RAN_NODE_TEXT[c.status] ?? "text-on-surface-variant"}`}>
+                    ● {STATUS_LABEL[c.status] ?? c.status}
+                  </td>
+                  <td className="px-6 py-4 text-xs text-on-surface-variant">{c.detail || "-"}</td>
+                  <td className="px-6 py-4 text-right">
+                    <button
+                      className="text-primary hover:underline font-bold text-xs disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed"
+                      onClick={() => handleRestartRow(c.id)}
+                      disabled={restartingId === c.id || c.status === "restarting"}
+                    >
+                      {restartingId === c.id || c.status === "restarting" ? "Restarting..." : "Restart"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
+    </div>
+  );
+}
+
+function MetricTile({ label, value, pct }) {
+  return (
+    <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/30">
+      <p className="text-xs text-on-surface-variant font-medium mb-1">
+        {label.toUpperCase()}
+      </p>
+      <div className="flex items-end gap-2">
+        <span className="text-2xl font-bold">{value}</span>
+      </div>
+      <div className="w-full bg-outline-variant/30 h-1.5 rounded-full mt-3 overflow-hidden">
+        <div className="bg-primary h-full" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+      </div>
+    </div>
+  );
+}
