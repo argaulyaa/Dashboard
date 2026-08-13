@@ -56,7 +56,7 @@ bukan struktur API-nya, supaya frontend tidak perlu diubah:
 
 | Domain | Ganti dengan |
 |---|---|
-| Core | Panggilan SBI (HTTP/2 REST) ke AMF/SMF/UPF, atau Docker/K8s API untuk restart container NF |
+| Core | SSH ke node Core (paramiko) menjalankan `docker ps/inspect/stats/logs/restart`, atau Docker Engine API (`OAI_DOCKER_HOST`) untuk restart container NF |
 | RAN | SSH/CLI ke OAI softmodem, atau config-management API kalau tersedia |
 | RIC | E2 interface via SDK FlexRIC (near-RT RIC / xApps), A1 policy call ke non-RT RIC |
 

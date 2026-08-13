@@ -16,7 +16,7 @@ Status implementasi saat ini (jangan asumsikan semua domain sudah nyata):
 
 | Domain | Provider aktif | Status |
 |---|---|---|
-| Core | `oai` | **Nyata** kalau `OAI_CORE_CONTAINERS` diisi di `.env` (query Docker Engine API). Fallback mock kalau tidak. |
+| Core | `oai` | **Nyata** kalau `OAI_CORE_CONTAINERS` diisi di `.env`. Dua mode: `OAI_SSH_HOST` (SSH paramiko ke node Core remote — recommended) atau `OAI_DOCKER_HOST` (Docker Engine API). Fallback mock kalau tidak. |
 | Core | `open5gs` | Nyata kalau `OPEN5GS_CORE_CONTAINERS` diisi. Belum ada testbed-nya. |
 | Core | `magma` | **Skeleton saja** (`MagmaCoreAdapter`), method-nya `raise NotImplementedError`. |
 | RAN | `oai` | Mock (`RanAdapter`), belum disambungkan. |

@@ -284,6 +284,219 @@ class DockerCoreAdapter:
             return None
 
 
+class SshDockerCoreAdapter(DockerCoreAdapter):
+    """
+    DockerCoreAdapter berbasis SSH untuk Core di mesin remote (mini PC testbed).
+
+    Perintah docker dijalankan remote via paramiko di node Core (mis. 10.91.2.151),
+    jadi TIDAK perlu mengekspos Docker daemon lewat TCP (lebih aman daripada
+    OAI_DOCKER_HOST=tcp://...). Cocok saat backend berjalan di PC lain (laptop
+    developer) dan node Core cuma bisa diakses via SSH.
+
+    Konfigurasi via .env:
+      OAI_SSH_HOST / OAI_SSH_PORT / OAI_SSH_USER / OAI_SSH_PASSWORD
+    Pemetaan container tetap lewat OAI_CORE_CONTAINERS (comp_id -> nama container).
+
+    Kontrak adapter sama persis dengan DockerCoreAdapter
+    (list/get/restart/jitter_health/get_logs) — frontend tidak perlu diubah.
+    """
+
+    CACHE_TTL = 2.5  # detik; telemetry push tiap 3 detik, hindari spam SSH
+
+    def __init__(self, container_map: dict, ssh_host: str, ssh_user: str,
+                 ssh_password: str, ssh_port: int = 22):
+        self._map = container_map
+        self._ssh = {
+            "host": ssh_host,
+            "port": ssh_port,
+            "user": ssh_user,
+            "password": ssh_password,
+        }
+        self._conn = None          # paramiko client persistent (lazy connect)
+        self._cache: dict = {}     # comp_id -> dict komponen
+        self._last_fetch = 0.0
+
+    # ------------------------------------------------------------------
+    # Kontrak adapter
+    # ------------------------------------------------------------------
+
+    def list(self) -> List[dict]:
+        self._maybe_refresh()
+        return [self._cache[c] for c in self._map]
+
+    def get(self, comp_id: str) -> Optional[dict]:
+        if comp_id not in self._map:
+            return None
+        self._maybe_refresh()
+        return self._cache.get(comp_id)
+
+    async def restart(self, comp_id: str) -> Optional[dict]:
+        if comp_id not in self._map:
+            return None
+        name = self._map[comp_id]
+        err = ""
+        try:
+            out, err = self._exec(f"docker restart {name}")
+        except Exception as e:
+            err = str(e)
+        # Paksa refresh supaya status terbaru di-fetch ulang
+        self._last_fetch = 0
+        await asyncio.sleep(2)
+        result = self.get(comp_id)
+        if result and err and result["status"] != "restarting":
+            result = dict(result)
+            result["detail"] = f"Restart error: {err[:120]}"
+        return result
+
+    def jitter_health(self):
+        """No-op — data datang dari Docker nyata, bukan simulasi."""
+        pass
+
+    def get_logs(self, comp_id: str, tail: int = 100) -> str:
+        if comp_id not in self._map:
+            return f"Component '{comp_id}' not mapped in OAI configuration."
+        name = self._map[comp_id]
+        try:
+            out, _ = self._exec(f"docker logs --tail {int(tail)} --timestamps {name}")
+            return out or "(tidak ada log)"
+        except Exception as e:
+            return f"[SSH Error] Gagal ambil log container '{name}': {e}"
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _maybe_refresh(self):
+        now = time.time()
+        if now - self._last_fetch < self.CACHE_TTL:
+            return
+        self._last_fetch = now
+        try:
+            out, err = self._exec(
+                "docker inspect -f '{{.Name}}|{{.State.Status}}|{{.State.StartedAt}}' $(docker ps -aq) 2>/dev/null; "
+                "echo '===STATS==='; "
+                "docker stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' 2>/dev/null"
+            )
+        except Exception as e:
+            for comp_id in self._map:
+                self._cache[comp_id] = self._down_component(
+                    comp_id, f"SSH ke node Core gagal: {e}")
+            return
+
+        inspect_data, stats_data = {}, {}
+        if "===STATS===" in out:
+            inspect_part, stats_part = out.split("===STATS===", 1)
+        else:
+            inspect_part, stats_part = out, ""
+        for line in inspect_part.splitlines():
+            line = line.strip()
+            if not line or "|" not in line:
+                continue
+            parts = line.split("|")
+            if len(parts) >= 3:
+                name = parts[0].lstrip("/")
+                inspect_data[name] = {"state": parts[1], "started_at": parts[2]}
+        for line in stats_part.splitlines():
+            line = line.strip()
+            if not line or "|" not in line:
+                continue
+            parts = line.split("|")
+            if len(parts) >= 4:
+                stats_data[parts[0]] = {
+                    "cpu": self._to_float(parts[1]),
+                    "mem_usage": parts[2],
+                    "mem_pct": self._to_float(parts[3]),
+                }
+
+        for comp_id, name in self._map.items():
+            info = inspect_data.get(name)
+            if info is None:
+                self._cache[comp_id] = self._down_component(
+                    comp_id, f"Container tidak ditemukan: {name}")
+                continue
+            stat = stats_data.get(name, {})
+            started_at = self._parse_started_at(info["started_at"])
+            self._cache[comp_id] = {
+                "id": comp_id,
+                "name": comp_id.upper(),
+                "kind": CORE_KIND_LABELS.get(comp_id, comp_id.upper()),
+                "status": self._map_status(info["state"]),
+                "detail": f"Container: {name} ({info['state']})",
+                "host": self._ssh["host"],   # target SSH console
+                "cpu_pct": stat.get("cpu", 0.0),
+                "mem_gb": self._parse_mem_usage_gb(stat.get("mem_usage", "")),
+                "mem_pct": stat.get("mem_pct", 0.0),
+                "throughput_mbps": 0.0,
+                "port": 0,
+                "latency_ms": 0.0,
+                "active_ues": 0,
+                "last_updated": time.time(),
+                "uptime_seconds": (time.time() - started_at) if started_at else 0,
+                "started_at": started_at or time.time(),
+            }
+
+    def _down_component(self, comp_id: str, reason: str) -> dict:
+        return {
+            "id": comp_id,
+            "name": comp_id.upper(),
+            "kind": CORE_KIND_LABELS.get(comp_id, comp_id.upper()),
+            "status": "down",
+            "detail": reason,
+            "host": self._ssh["host"],
+            "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
+            "throughput_mbps": 0.0, "port": 0, "latency_ms": 0.0,
+            "active_ues": 0,
+            "last_updated": time.time(),
+            "uptime_seconds": 0,
+            "started_at": time.time(),
+        }
+
+    def _exec(self, cmd: str):
+        """Jalankan command di node Core via paramiko (koneksi persistent)."""
+        import paramiko
+        conn = self._conn
+        if conn is None or not conn.get_transport() or not conn.get_transport().is_active():
+            conn = paramiko.SSHClient()
+            conn.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            conn.connect(
+                hostname=self._ssh["host"],
+                port=self._ssh["port"],
+                username=self._ssh["user"],
+                password=self._ssh["password"],
+                timeout=8,
+                banner_timeout=10,
+            )
+            self._conn = conn
+        _, stdout, stderr = conn.exec_command(cmd, timeout=20)
+        out = stdout.read().decode("utf-8", errors="replace")
+        err = stderr.read().decode("utf-8", errors="replace")
+        return out, err
+
+    @staticmethod
+    def _to_float(s: str) -> float:
+        try:
+            return float(str(s).replace("%", "").strip())
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _parse_mem_usage_gb(mem_usage: str) -> float:
+        """'123MiB / 15.6GiB' -> 0.12 (GB, bagian usage saja)."""
+        try:
+            usage = mem_usage.split("/")[0].strip()
+            num = float(usage[:-3].strip())   # hilangkan suffix KiB/MiB/GiB
+            unit = usage[-3:].lower()
+            if unit == "kib":
+                return num / (1024 ** 2)
+            if unit == "mib":
+                return num / 1024
+            if unit == "gib":
+                return num
+            return 0.0
+        except Exception:
+            return 0.0
+
+
 # ---------------------------------------------------------------------------
 # RAN adapters
 # ---------------------------------------------------------------------------
@@ -388,12 +601,39 @@ def _build_core_providers() -> dict:
     """
     providers = {}
 
-    # --- OAI Core via Docker ---
+    # --- OAI Core via Docker (SSH atau Docker Engine API) ---
     oai_containers_raw = os.environ.get("OAI_CORE_CONTAINERS", "")
+    oai_ssh_host = os.environ.get("OAI_SSH_HOST", "") or None
     oai_docker_host = os.environ.get("OAI_DOCKER_HOST", "") or None
+
+    # Pemetaan default sesuai container yang ada di mini PC testbed (CORE 10.91.2.151)
+    DEFAULT_OAI_CONTAINER_MAP = {
+        "amf": "oai-amf", "smf": "oai-smf", "upf": "oai-upf", "nrf": "oai-nrf",
+        "ausf": "oai-ausf", "udm": "oai-udm", "udr": "oai-udr",
+        "mysql": "mysql", "ext-dn": "oai-ext-dn",
+    }
     if oai_containers_raw:
         try:
             container_map = json.loads(oai_containers_raw)
+        except Exception:
+            container_map = DEFAULT_OAI_CONTAINER_MAP
+    elif oai_ssh_host or oai_docker_host:
+        container_map = DEFAULT_OAI_CONTAINER_MAP
+    else:
+        container_map = {}
+
+    if oai_ssh_host and container_map:
+        # Mode SSH: perintah docker dijalankan remote via paramiko — paling pas
+        # untuk backend di PC developer yang menembak mini PC testbed.
+        adapter = SshDockerCoreAdapter(
+            container_map,
+            ssh_host=oai_ssh_host,
+            ssh_user=os.environ.get("OAI_SSH_USER", "core"),
+            ssh_password=os.environ.get("OAI_SSH_PASSWORD", ""),
+            ssh_port=int(os.environ.get("OAI_SSH_PORT", "22")),
+        )
+    elif container_map:
+        try:
             adapter = DockerCoreAdapter(container_map, docker_host=oai_docker_host)
         except Exception:
             # Docker tidak reachable atau env tidak valid → fallback ke mock
@@ -403,7 +643,7 @@ def _build_core_providers() -> dict:
     providers["oai"] = {
         "label": "OAI 5GC",
         "icon": "cloud_done",
-        "desc": "OpenAirInterface 5G Core (Docker Engine API)",
+        "desc": "OpenAirInterface 5G Core (Docker via SSH/API)",
         "adapter": adapter,
     }
 
