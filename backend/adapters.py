@@ -378,6 +378,7 @@ class SshDockerCoreAdapter(DockerCoreAdapter):
                 "docker stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' 2>/dev/null"
             )
         except Exception as e:
+            print(f"[SshDockerCoreAdapter] SSH ke {self._ssh['host']} gagal: {e}", flush=True)
             for comp_id in self._map:
                 self._cache[comp_id] = self._down_component(
                     comp_id, f"SSH ke node Core gagal: {e}")
