@@ -1,6 +1,0 @@
-.env
-.venv/
-node_modules/
-*.md
-!.helmignore
-templates/tests/
