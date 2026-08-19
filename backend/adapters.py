@@ -577,10 +577,11 @@ class SshRanAdapter:
                 "for name in gnb nr-softmodem srsgnb; do "
                 "m=$(ps -C $name --no-headers -o pid=,etime=,pcpu=,rss=,args= 2>/dev/null | head -1); "
                 "[ -n \"$m\" ] && echo \"PROC|$name|$m\"; done; "
+                "L=$(ls -t /home/ran/srsgnb*.log /home/ran/gnb*.log 2>/dev/null | head -1); "
+                "echo \"LOG|$L\"; "
+                "echo \"UE|$(tail -2000 \"$L\" 2>/dev/null | grep -oiE 'rnti[ =]?0x[0-9a-f]+' | sort -u | wc -l)\"; "
                 "echo \"N2|$(sudo ss -Sn 2>/dev/null | grep ':38412' | grep -c ESTAB)\"; "
                 "echo \"E2|$(sudo ss -Sn 2>/dev/null | grep -E ':36421|:36422' | grep -c ESTAB)\"; "
-                "echo \"UE|$(grep -hE 'Adding new UE context|RRC.*attach|UE context|registered' "
-                "/home/ran/gnb*.log /home/ran/srsgnb*.log 2>/dev/null | tail -8 | wc -l)\"; "
                 "echo \"N2IP|$(sudo ss -Sn 2>/dev/null | grep ':38412' | grep ESTAB | grep -oE '[0-9.]+:38412' | head -1)\""
             )
         except Exception as e:
@@ -604,12 +605,14 @@ class SshRanAdapter:
                         proc = {"pid": rest[0], "etime": rest[1], "pcpu": self._to_float(rest[2]),
                                 "rss_kb": self._to_float(rest[3]),
                                 "args": rest[4] if len(rest) > 4 else ""}
+            elif ln.startswith("LOG|"):
+                self._cfg["log"] = ln.split("|", 1)[1].strip() or "/home/ran/srsgnb.log"
+            elif ln.startswith("UE|"):
+                ue_count = int(ln.split("|", 1)[1] or 0)
             elif ln.startswith("N2|"):
                 n2_count = int(ln.split("|", 1)[1] or 0)
             elif ln.startswith("E2|"):
                 e2_count = int(ln.split("|", 1)[1] or 0)
-            elif ln.startswith("UE|"):
-                ue_count = int(ln.split("|", 1)[1] or 0)
             elif ln.startswith("N2IP|"):
                 n2_ip = ln.split("|", 1)[1] or ""
 
@@ -620,6 +623,7 @@ class SshRanAdapter:
         # Ambil config gNB (cache per identity: type + args)
         signature = f"{gtype}::{proc['args']}"
         if self._cfg.get("_sig") != signature:
+            # keep log path (bisa berubah saat gNB restart) tapi config di-refetch
             self._cfg = self._fetch_config(gtype, proc["args"])
             self._cfg["_sig"] = signature
 
