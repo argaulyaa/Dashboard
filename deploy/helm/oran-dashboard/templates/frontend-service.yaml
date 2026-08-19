@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "oran-dashboard.fullname" . }}-frontend
+  labels:
+    {{- include "oran-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  type: {{ .Values.frontend.serviceType }}
+  selector:
+    app.kubernetes.io/name: {{ include "oran-dashboard.fullname" . }}
+    app.kubernetes.io/component: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      {{- if and (eq .Values.frontend.serviceType "NodePort") .Values.frontend.nodePort }}
+      nodePort: {{ .Values.frontend.nodePort }}
+      {{- end }}

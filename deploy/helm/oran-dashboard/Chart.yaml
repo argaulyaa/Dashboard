@@ -1,0 +1,14 @@
+apiVersion: v2
+name: oran-dashboard
+description: O-RAN Control Dashboard — FastAPI backend + React/Vite frontend (monitor & control OpenRAN 5G testbed)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/argaulyaa/OpenRAN-Dashboard
+keywords:
+  - openran
+  - 5g
+  - dashboard
+  - oai
+  - srsran
+  - flexric

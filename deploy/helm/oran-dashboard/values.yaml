@@ -1,0 +1,70 @@
+# Default values for oran-dashboard.
+# Helm chart for the O-RAN Control Dashboard. Docs: deploy/README.md
+
+# ---- Images ----
+# Build & push with the backend/ and frontend/ Dockerfiles first, then set
+# the repository/tag you pushed to (e.g. ghcr.io/argaulyaa/...).
+image:
+  pullPolicy: IfNotPresent
+  # override per component below
+
+backend:
+  replicas: 1
+  image:
+    repository: ghcr.io/argaulyaa/openran-dashboard-backend
+    tag: latest
+  service:
+    type: ClusterIP
+    port: 8000
+  resources: {}
+  # Optional: pin to a specific node (e.g. for local/ hostPath persistence)
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # Extra env vars (overrides for anything not covered below)
+  extraEnv: {}
+  oai:
+    # 5G Core OAI — reached via SSH from the pod
+    sshHost: "10.91.2.151"
+    sshPort: "22"
+    sshUser: "core"
+    sshPassword: "CHANGE_ME"
+    containers: '{"amf":"oai-amf","smf":"oai-smf","upf":"oai-upf","nrf":"oai-nrf","ausf":"oai-ausf","udm":"oai-udm","udr":"oai-udr","mysql":"mysql","ext-dn":"oai-ext-dn"}'
+  ran:
+    # RAN gNB — detect OAI nr-softmodem / srsRAN `gnb` via SSH. Set sshHost to
+    # the RAN node IP to enable real RAN data; leave empty ("") for RAN mock.
+    sshHost: "10.91.2.152"
+    sshPort: "22"
+    sshUser: "ran"
+    sshPassword: "CHANGE_ME"
+
+auth:
+  # Format "user:pass,user2:pass2" (default admin:admin)
+  oranUsers: "admin:admin"
+
+database:
+  # See backend/database.py — sqlite path is under /data (mounted volume)
+  url: "sqlite:////data/oran_dashboard.db"
+
+persistence:
+  enabled: false
+  size: 1Gi
+  # storageClass: ""   # required if your cluster has no default StorageClass
+
+frontend:
+  replicas: 1
+  image:
+    repository: ghcr.io/argaulyaa/openran-dashboard-frontend
+    tag: latest
+  # Expose options:
+  #   NodePort  → http://<nodeIP>:30080  (simplest, no extra components)
+  #   Ingress   → needs an ingress controller; see ingress below
+  serviceType: NodePort
+  nodePort: 30080
+  ingress:
+    enabled: false
+    className: ""
+    host: dashboard.local
+    # tls:
+    #   - hosts: [dashboard.local]
+    #     secretName: oran-dashboard-tls

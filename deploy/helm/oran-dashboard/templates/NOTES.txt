@@ -1,0 +1,24 @@
+O-RAN Control Dashboard has been deployed to your cluster.
+
+Get the dashboard URL:
+
+  {{- if eq .Values.frontend.serviceType "NodePort" }}
+  NodePort URL:
+    http://<node-ip>:{{ .Values.frontend.nodePort }}
+    (kubectl get nodes -o wide  → ambil INTERNAL-IP node mana pun)
+  {{- else if .Values.frontend.ingress.enabled }}
+  Ingress URL:
+    http://{{ .Values.frontend.ingress.host }}
+  {{- else if eq .Values.frontend.serviceType "LoadBalancer" }}
+  LoadBalancer:
+    kubectl get svc {{ include "oran-dashboard.fullname" . }}-frontend -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+  {{- end }}
+
+Backend check:
+  /api/health      → curl http://<url>/api/health
+  /api/core/components?provider=oai   (real OAI data via SSH)
+  /api/ran/components?provider=oai    (real gNB data via SSH, kalau RAN host diset)
+
+NOTE: Pastikan pod backend bisa SSH ke node Core (10.91.2.151) & RAN (10.91.2.152).
+Default egress pod → LAN node IP berfungsi, tapi firewall node harus izinkan.
+Persistensi default emptyDir — aktifkan persistence.enabled=true untuk PVC.

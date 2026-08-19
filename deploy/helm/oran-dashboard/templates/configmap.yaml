@@ -1,0 +1,19 @@
+{{- if or .Values.backend.oai.sshHost .Values.backend.ran.sshHost }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "oran-dashboard.fullname" . }}-backend
+  labels:
+    {{- include "oran-dashboard.labels" . | nindent 4 }}
+data:
+  OAI_CORE_CONTAINERS: {{ .Values.backend.oai.containers | quote }}
+  OAI_SSH_HOST: {{ .Values.backend.oai.sshHost | quote }}
+  OAI_SSH_PORT: {{ .Values.backend.oai.sshPort | quote }}
+  OAI_SSH_USER: {{ .Values.backend.oai.sshUser | quote }}
+  {{- if .Values.backend.ran.sshHost }}
+  OAI_SSH_RAN_HOST: {{ .Values.backend.ran.sshHost | quote }}
+  OAI_SSH_RAN_PORT: {{ .Values.backend.ran.sshPort | quote }}
+  OAI_SSH_RAN_USER: {{ .Values.backend.ran.sshUser | quote }}
+  {{- end }}
+  DATABASE_URL: {{ .Values.database.url | quote }}
+{{- end }}
