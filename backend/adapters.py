@@ -520,6 +520,255 @@ class RanAdapter(BaseAdapter):
         ])
 
 
+class SshRanAdapter:
+    """
+    Adapter RAN berbasis SSH untuk node gNB (mini PC RAN testbed, 10.91.2.152).
+
+    Mendeteksi gNB yang sedang jalan — OAI nr-softmodem ATAU srsRAN (binary `gnb`)
+    — lalu melaporkan status proses, uptime, CPU/RAM, konfig (band/freq/PRB/PLMN),
+    status koneksi N2 (SCTP 38412) dan E2 (SCTP 36421/36422), plus perkiraan UE
+    dari log gNB. Semua data nyata dari mesin, bukan simulasi.
+
+    Konfigurasi via .env:
+      OAI_SSH_RAN_HOST / OAI_SSH_RAN_PORT / OAI_SSH_RAN_USER / OAI_SSH_RAN_PASSWORD
+    """
+
+    CACHE_TTL = 2.5
+
+    def __init__(self, ssh_host: str, ssh_user: str, ssh_password: str, ssh_port: int = 22):
+        self._ssh = {"host": ssh_host, "port": ssh_port, "user": ssh_user, "password": ssh_password}
+        self._conn = None
+        self._cache: dict = {}
+        self._last_fetch = 0.0
+        self._cfg = {}        # {type, conf, band, bw, arfcn, plmn, n2_ip} — cache per gNB identity
+
+    # ---------------- kontrak adapter ----------------
+    def list(self) -> List[dict]:
+        self._maybe_refresh()
+        return [self._cache[c] for c in ["gnb"]]
+
+    def get(self, comp_id: str) -> Optional[dict]:
+        self._maybe_refresh()
+        return self._cache.get(comp_id)
+
+    async def restart(self, comp_id: str) -> Optional[dict]:
+        # Restart gNB RF berbahaya saat eksperimen live — dikembalikan apa adanya.
+        return self.get(comp_id)
+
+    def jitter_health(self):
+        pass
+
+    def get_logs(self, comp_id: str, tail: int = 100) -> str:
+        log = self._cfg.get("log", "/home/ran/srsgnb.log")
+        try:
+            out, _ = self._exec(f"tail -n {int(tail)} {log}")
+            return out or "(tidak ada log)"
+        except Exception as e:
+            return f"[SSH Error] Gagal ambil log gNB: {e}"
+
+    # ---------------- refresh ----------------
+    def _maybe_refresh(self):
+        now = time.time()
+        if now - self._last_fetch < self.CACHE_TTL:
+            return
+        self._last_fetch = now
+        try:
+            out, _ = self._exec(
+                "for name in gnb nr-softmodem srsgnb; do "
+                "m=$(ps -C $name --no-headers -o pid=,etime=,pcpu=,rss=,args= 2>/dev/null | head -1); "
+                "[ -n \"$m\" ] && echo \"PROC|$name|$m\"; done; "
+                "echo \"N2|$(sudo ss -Sn 2>/dev/null | grep ':38412' | grep -c ESTAB)\"; "
+                "echo \"E2|$(sudo ss -Sn 2>/dev/null | grep -E ':36421|:36422' | grep -c ESTAB)\"; "
+                "echo \"UE|$(grep -hE 'Adding new UE context|RRC.*attach|UE context|registered' "
+                "/home/ran/gnb*.log /home/ran/srsgnb*.log 2>/dev/null | tail -8 | wc -l)\"; "
+                "echo \"N2IP|$(sudo ss -Sn 2>/dev/null | grep ':38412' | grep ESTAB | grep -oE '[0-9.]+:38412' | head -1)\""
+            )
+        except Exception as e:
+            print(f"[SshRanAdapter] SSH ke {self._ssh['host']} gagal: {e}", flush=True)
+            self._cache["gnb"] = self._down(f"SSH ke node RAN gagal: {e}")
+            return
+
+        gtype, proc = None, None
+        n2_count = e2_count = ue_count = 0
+        n2_ip = ""
+        for ln in out.splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            if ln.startswith("PROC|"):
+                parts = ln.split("|")
+                if len(parts) >= 3:
+                    gtype = parts[1]
+                    rest = parts[2].split(None, 4)  # pid etime pcpu rss [args...]
+                    if len(rest) >= 4:
+                        proc = {"pid": rest[0], "etime": rest[1], "pcpu": self._to_float(rest[2]),
+                                "rss_kb": self._to_float(rest[3]),
+                                "args": rest[4] if len(rest) > 4 else ""}
+            elif ln.startswith("N2|"):
+                n2_count = int(ln.split("|", 1)[1] or 0)
+            elif ln.startswith("E2|"):
+                e2_count = int(ln.split("|", 1)[1] or 0)
+            elif ln.startswith("UE|"):
+                ue_count = int(ln.split("|", 1)[1] or 0)
+            elif ln.startswith("N2IP|"):
+                n2_ip = ln.split("|", 1)[1] or ""
+
+        if not proc:
+            self._cache["gnb"] = self._down("gNB tidak jalan (nr-softmodem/srsRAN tidak ditemukan di RAN)")
+            return
+
+        # Ambil config gNB (cache per identity: type + args)
+        signature = f"{gtype}::{proc['args']}"
+        if self._cfg.get("_sig") != signature:
+            self._cfg = self._fetch_config(gtype, proc["args"])
+            self._cfg["_sig"] = signature
+
+        n2_desc = n2_ip if n2_ip else f"{n2_count} koneksi"
+        e2_desc = f"{e2_count} sesi E2" if e2_count else "tidak ada"
+        uptime = self._parse_etime(proc["etime"])
+        mem_gb = proc["rss_kb"] / (1024 * 1024)
+        mem_total = 15.9  # total RAM node RAN (GB) — dipakai buat mem_pct kasaran
+        mem_pct = round(min(100.0, mem_gb / mem_total * 100), 2)
+
+        detail = (
+            f"{self._cfg.get('type', gtype)} | n{self._cfg.get('band', '?')} "
+            f"{self._cfg.get('bw', '?')}MHz | ARFCN {self._cfg.get('arfcn', '?')} | PLMN {self._cfg.get('plmn', '?')} "
+            f"| N2: {n2_desc} | E2: {e2_desc}"
+        )
+        self._cache["gnb"] = {
+            "id": "gnb",
+            "name": "gNB",
+            "kind": self._cfg.get("type", "gNB"),
+            "status": "healthy",
+            "detail": detail,
+            "host": self._ssh["host"],
+            "cpu_pct": round(proc["pcpu"], 2),
+            "mem_gb": round(mem_gb, 2),
+            "mem_pct": mem_pct,
+            "throughput_mbps": 0.0,
+            "port": 38412,
+            "latency_ms": 0.0,
+            "active_ues": ue_count if ue_count else 0,
+            "last_updated": time.time(),
+            "uptime_seconds": uptime,
+            "started_at": time.time() - uptime,
+        }
+        # simpankan juga log aktif buat get_logs
+        if "log" not in self._cfg:
+            self._cfg["log"] = self._guess_active_log(gtype)
+
+    # ---------------- helpers ----------------
+    def _guess_active_log(self, gtype) -> str:
+        try:
+            out, _ = self._exec(
+                "ls -t /home/ran/gnb*.log /home/ran/srsgnb*.log 2>/dev/null | head -1")
+            p = out.strip().splitlines()
+            return p[0] if p and p[0].strip() else "/home/ran/srsgnb.log"
+        except Exception:
+            return "/home/ran/srsgnb.log"
+
+    def _fetch_config(self, gtype, args) -> dict:
+        import re
+        cfg = {"type": "", "band": "", "bw": "", "arfcn": "", "plmn": ""}
+        if gtype == "nr-softmodem":
+            cfg["type"] = "OAI nr-softmodem"
+            m = re.search(r"-O\s+(\S+)", args)
+            path = m.group(1) if m else None
+            if path and "/" not in path:
+                path = f"/home/ran/{path}"
+            if path:
+                try:
+                    o, _ = self._exec(f"grep -iE 'dl_frequencyBand|dl_carrierBandwidth|bands[[:space:]]*=' {path} | head -5")
+                    for ln in o.splitlines():
+                        kv = re.search(r'([A-Za-z_]+)\s*=\s*([^;]+)', ln)
+                        if kv:
+                            k, v = kv.group(1).lower(), kv.group(2).strip()
+                            if "band" in k and not cfg["band"]:
+                                cfg["band"] = v
+                            elif "carrierbandwidth" in k and not cfg["bw"]:
+                                cfg["bw"] = v
+                    cfg["conf"] = path
+                except Exception:
+                    pass
+        else:
+            cfg["type"] = "srsRAN gNB"
+            m = re.search(r"-c\s+(\S+)", args)
+            path = m.group(1) if m else None
+            if path and not path.startswith("/"):
+                path = f"/home/ran/{path}"
+            cfg["conf"] = path or ""
+            if path:
+                try:
+                    o, _ = self._exec(
+                        f"grep -iE 'band:|dl_arfcn:|channel_bandwidth_MHz|plmn:' {path} | head -8")
+                    for ln in o.splitlines():
+                        kv = re.search(r'([A-Za-z_]+)\s*:\s*"?([A-Za-z0-9_.]+)', ln)
+                        if kv:
+                            k = kv.group(1).lower()
+                            v = kv.group(2)
+                            if k == "band":
+                                cfg["band"] = v
+                            elif k == "dl_arfcn":
+                                cfg["arfcn"] = v
+                            elif "bandwidth" in k:
+                                cfg["bw"] = v
+                            elif k == "plmn":
+                                cfg["plmn"] = v
+                except Exception:
+                    pass
+        return cfg
+
+    def _down(self, reason) -> dict:
+        return {
+            "id": "gnb", "name": "gNB", "kind": "gNB", "status": "down",
+            "detail": reason, "host": self._ssh["host"],
+            "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
+            "throughput_mbps": 0.0, "port": 38412, "latency_ms": 0.0, "active_ues": 0,
+            "last_updated": time.time(), "uptime_seconds": 0, "started_at": time.time(),
+        }
+
+    def _exec(self, cmd):
+        import paramiko
+        conn = self._conn
+        if conn is None or not conn.get_transport() or not conn.get_transport().is_active():
+            conn = paramiko.SSHClient()
+            conn.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            conn.connect(hostname=self._ssh["host"], port=self._ssh["port"],
+                         username=self._ssh["user"], password=self._ssh["password"],
+                         timeout=8, banner_timeout=10)
+            self._conn = conn
+        _, stdout, stderr = conn.exec_command(cmd, timeout=20)
+        out = stdout.read().decode("utf-8", errors="replace")
+        err = stderr.read().decode("utf-8", errors="replace")
+        return out, err
+
+    @staticmethod
+    def _to_float(s) -> float:
+        try:
+            return float(str(s).replace("%", "").strip())
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _parse_etime(etime) -> int:
+        try:
+            d = 0
+            hms = etime
+            if "-" in etime:
+                d, hms = etime.split("-", 1)
+                d = int(d)
+            parts = [int(x) for x in hms.split(":")]
+            if len(parts) == 3:
+                h, m, s = parts
+            elif len(parts) == 2:
+                h, m, s = 0, parts[0], parts[1]
+            else:
+                h, m, s = 0, 0, parts[0]
+            return d * 86400 + h * 3600 + m * 60 + s
+        except Exception:
+            return 0
+
+
 # ---------------------------------------------------------------------------
 # RIC adapters
 # ---------------------------------------------------------------------------
@@ -683,16 +932,33 @@ def _build_core_providers() -> dict:
     return providers
 
 
-DOMAIN_PROVIDERS = {
-    "core": _build_core_providers(),
-    "ran": {
+def _build_ran_providers() -> dict:
+    """RAN provider — aktif real via SSH kalau OAI_SSH_RAN_HOST di-set, fallback mock."""
+    ssh_host = os.environ.get("OAI_SSH_RAN_HOST", "") or None
+    if ssh_host:
+        adapter = SshRanAdapter(
+            ssh_host=ssh_host,
+            ssh_user=os.environ.get("OAI_SSH_RAN_USER", "ran"),
+            ssh_password=os.environ.get("OAI_SSH_RAN_PASSWORD", ""),
+            ssh_port=int(os.environ.get("OAI_SSH_RAN_PORT", "22")),
+        )
+        desc = "OAI / srsRAN gNB (real via SSH)"
+    else:
+        adapter = RanAdapter()
+        desc = "OpenAirInterface gNB (softmodem mock)"
+    return {
         "oai": {
             "label": "OAI RAN",
             "icon": "settings_input_antenna",
-            "desc": "OpenAirInterface gNB (softmodem mock)",
-            "adapter": RanAdapter(),
+            "desc": desc,
+            "adapter": adapter,
         },
-    },
+    }
+
+
+DOMAIN_PROVIDERS = {
+    "core": _build_core_providers(),
+    "ran": _build_ran_providers(),
     "ric": {
         "oai": {
             "label": "FlexRIC",

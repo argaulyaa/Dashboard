@@ -57,7 +57,7 @@ bukan struktur API-nya, supaya frontend tidak perlu diubah:
 | Domain | Ganti dengan |
 |---|---|
 | Core | SSH ke node Core (paramiko) menjalankan `docker ps/inspect/stats/logs/restart`, atau Docker Engine API (`OAI_DOCKER_HOST`) untuk restart container NF |
-| RAN | SSH/CLI ke OAI softmodem, atau config-management API kalau tersedia |
+| RAN | SSH/CLI ke OAI softmodem / srsRAN (sudah ada: `SshRanAdapter` — status proses, uptime, CPU/RAM, konfig, N2/E2) |
 | RIC | E2 interface via SDK FlexRIC (near-RT RIC / xApps), A1 policy call ke non-RT RIC |
 
 Untuk telemetry live yang sesungguhnya, ganti loop `jitter_health()` di

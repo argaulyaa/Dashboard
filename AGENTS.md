@@ -19,7 +19,7 @@ Status implementasi saat ini (jangan asumsikan semua domain sudah nyata):
 | Core | `oai` | **Nyata** kalau `OAI_CORE_CONTAINERS` diisi di `.env`. Dua mode: `OAI_SSH_HOST` (SSH paramiko ke node Core remote — recommended) atau `OAI_DOCKER_HOST` (Docker Engine API). Fallback mock kalau tidak. |
 | Core | `open5gs` | Nyata kalau `OPEN5GS_CORE_CONTAINERS` diisi. Belum ada testbed-nya. |
 | Core | `magma` | **Skeleton saja** (`MagmaCoreAdapter`), method-nya `raise NotImplementedError`. |
-| RAN | `oai` | Mock (`RanAdapter`), belum disambungkan. |
+| RAN | `oai` | **Nyata** kalau `OAI_SSH_RAN_HOST` diisi di `.env` — deteksi OAI nr-softmodem / srsRAN `gnb` via SSH. Fallback mock kalau tidak. |
 | RIC | `oai` | Mock (`RicAdapter`), belum disambungkan. |
 
 Jangan tulis kode yang berasumsi RAN/RIC sudah live — cek dulu isi
