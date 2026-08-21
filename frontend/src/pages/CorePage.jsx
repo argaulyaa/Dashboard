@@ -233,60 +233,23 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
           />
         )}
 
-        {/* Right Sidebar: Connectivity Visualization */}
-        <div className="col-span-12 lg:col-span-4 flex flex-col gap-6">
-          <div className="glass-card rounded-2xl p-6 shadow-sm border border-outline-variant flex-1 flex flex-col items-center justify-center text-center">
-            <h4 className="text-sm font-bold mb-4 self-start">Topology Overview</h4>
-            <div className="relative w-48 h-48 mb-4">
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-16 h-16 rounded-full bg-primary-container border-4 border-white shadow-lg z-10 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-white">hub</span>
-                </div>
-              </div>
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 flex flex-col items-center">
-                <div className="w-8 h-8 rounded-full bg-secondary border-2 border-white shadow-sm flex items-center justify-center">
-                  <span className="material-symbols-outlined text-white text-xs">cell_tower</span>
-                </div>
-                <p className="text-[10px] font-bold mt-1">UE-01</p>
-              </div>
-              <div className="absolute bottom-4 left-4 flex flex-col items-center">
-                <div className="w-8 h-8 rounded-full bg-secondary border-2 border-white shadow-sm flex items-center justify-center">
-                  <span className="material-symbols-outlined text-white text-xs">smartphone</span>
-                </div>
-                <p className="text-[10px] font-bold mt-1">SIM-04</p>
-              </div>
-              <div className="absolute bottom-4 right-4 flex flex-col items-center">
-                <div className="w-8 h-8 rounded-full bg-secondary border-2 border-white shadow-sm flex items-center justify-center">
-                  <span className="material-symbols-outlined text-white text-xs">router</span>
-                </div>
-                <p className="text-[10px] font-bold mt-1">GNB-3</p>
-              </div>
-              <svg className="absolute inset-0 w-full h-full -z-10" viewBox="0 0 100 100">
-                <line stroke="#0c56d0" strokeDasharray="2 2" strokeWidth="1" x1="50" x2="50" y1="50" y2="20" />
-                <line stroke="#0c56d0" strokeDasharray="2 2" strokeWidth="1" x1="50" x2="25" y1="50" y2="75" />
-                <line stroke="#0c56d0" strokeDasharray="2 2" strokeWidth="1" x1="50" x2="75" y1="50" y2="75" />
-              </svg>
+        {/* Right Sidebar: Instance Health */}
+        <div className="col-span-12 lg:col-span-4 glass-card rounded-2xl p-6 shadow-sm border border-outline-variant">
+          <h4 className="text-sm font-bold mb-4">Instance Health</h4>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="text-xs">Uptime</span>
+              <span className="text-xs font-mono font-bold">{formatUptime(hero?.uptime_seconds)}</span>
             </div>
-            <p className="text-xs text-on-surface-variant">{activeCount} Active Network Nodes connected to this core instance.</p>
-          </div>
-
-          <div className="glass-card rounded-2xl p-6 shadow-sm border border-outline-variant">
-            <h4 className="text-sm font-bold mb-4">Instance Health</h4>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <span className="text-xs">Uptime</span>
-                <span className="text-xs font-mono font-bold">{formatUptime(hero?.uptime_seconds)}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-xs">Latency (Backhaul)</span>
-                <span className="text-xs font-mono font-bold text-secondary">
-                  {hero?.latency_ms != null ? `${hero.latency_ms}ms` : "-"}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-xs">Active Sessions</span>
-                <span className="text-xs font-mono font-bold">-</span>
-              </div>
+            <div className="flex justify-between items-center">
+              <span className="text-xs">Latency (Backhaul)</span>
+              <span className="text-xs font-mono font-bold text-secondary">
+                {hero?.latency_ms != null ? `${hero.latency_ms}ms` : "-"}
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-xs">Active Sessions</span>
+              <span className="text-xs font-mono font-bold">-</span>
             </div>
           </div>
         </div>
