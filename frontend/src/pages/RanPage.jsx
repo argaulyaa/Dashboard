@@ -95,50 +95,31 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
         <p className="text-on-surface-variant mt-1">Monitor and configure gNodeB instances across distributed sites.</p>
       </div>
 
-      {/* Provider Tabs */}
-      {providers.length > 1 && (
-        <div className="flex items-center gap-8 border-b border-outline-variant mb-8 overflow-x-auto whitespace-nowrap">
-          {providers.map((p) => {
-            const active = p.key === activeProvider;
-            const count = p.key === providers[0]?.key ? displayedComponents.length : null;
-            return (
-              <button
-                key={p.key}
-                onClick={() => setActiveProvider(p.key)}
-                className={`px-1 py-4 border-b-2 flex items-center gap-2 transition-colors font-medium ${
-                  active ? "border-primary text-primary font-bold" : "border-transparent text-on-surface-variant hover:text-on-surface"
-                }`}
-              >
-                <span className="material-symbols-outlined">{p.icon}</span>
-                {p.label}
-                {count !== null && (
-                  <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                      active ? "bg-primary/10 text-primary" : "bg-surface-container text-on-surface-variant"
-                    }`}
-                  >
-                    {String(count).padStart(2, "0")}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {/* Provider Selector Tabs — same card-button style as CorePage */}
+      <div className="flex flex-wrap gap-4 mb-8">
+        {providers.map((p) => {
+          const active = p.key === activeProvider;
+          return (
+            <button
+              key={p.key}
+              onClick={() => setActiveProvider(p.key)}
+              className={`flex items-center gap-3 px-6 py-4 rounded-xl border-2 transition-all duration-200 glass-card ${
+                active
+                  ? "border-primary text-primary shadow-md"
+                  : "border-transparent text-on-surface-variant hover:bg-surface-container"
+              }`}
+            >
+              <span className="material-symbols-outlined">{p.icon}</span>
+              <div className="text-left">
+                <p className="text-xs uppercase tracking-widest font-bold opacity-70">Provider</p>
+                <p className="font-bold">{p.label}</p>
+              </div>
+            </button>
+          );
+        })}
+      </div>
 
-      {/* Provider content */}
-      {activeProvider && !isDefaultProvider ? (
-        <div className="bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant p-10 text-center text-on-surface-variant">
-          <span className="material-symbols-outlined text-4xl mb-2 block">construction</span>
-          <p className="font-bold mb-1">{activeMeta?.label}</p>
-          <p className="text-sm">
-            Adapter <code>{activeProvider}</code> is not connected to backend yet.
-            This tab will become active once the corresponding adapter is added in{" "}
-            <code>backend/adapters.py</code>.
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-12 gap-6">
+      <div className="grid grid-cols-12 gap-6">
           {/* Main Status Card (Featured) */}
           <div className="col-span-12 lg:col-span-8 bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant overflow-hidden flex flex-col">
             <div className="p-6 border-b border-outline-variant flex justify-between items-center">
@@ -167,7 +148,7 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
               <div className="space-y-6">
                 <div className="h-12 flex flex-col justify-center gap-2">
                   <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Implementation</p>
-                  <p className="text-on-surface text-body-md font-bold">OAI Softmodem</p>
+                  <p className="text-on-surface text-body-md font-bold">{hero?.kind || activeMeta?.label || "gNB"}</p>
                 </div>
                 <div className="h-12 flex flex-col justify-center gap-2">
                   <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Architecture</p>
@@ -303,14 +284,14 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant">
-                  {components.length === 0 && (
+                  {displayedComponents.length === 0 && (
                     <tr>
                       <td colSpan={6} className="px-6 py-6 text-center text-on-surface-variant text-xs font-mono">
                         No component data available.
                       </td>
                     </tr>
                   )}
-                  {components.map((c) => {
+                  {displayedComponents.map((c) => {
                     const meta = STATUS_META[c.status] ?? { label: c.status, dot: "bg-outline", text: "text-on-surface-variant" };
                     const isDown = c.status === "down";
                     return (
@@ -366,7 +347,6 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
             </div>
           </div>
         </div>
-      )}
     </div>
   );
 }

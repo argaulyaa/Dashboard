@@ -535,12 +535,16 @@ class SshRanAdapter:
 
     CACHE_TTL = 2.5
 
-    def __init__(self, ssh_host: str, ssh_user: str, ssh_password: str, ssh_port: int = 22):
+    def __init__(self, ssh_host: str, ssh_user: str, ssh_password: str, ssh_port: int = 22,
+                 binary_hints: list = None):
         self._ssh = {"host": ssh_host, "port": ssh_port, "user": ssh_user, "password": ssh_password}
         self._conn = None
         self._cache: dict = {}
         self._last_fetch = 0.0
         self._cfg = {}        # {type, conf, band, bw, arfcn, plmn, n2_ip} — cache per gNB identity
+        # Binary names yang di-scan saat refresh. Pisahkan OAI (nr-softmodem) vs
+        # srsRAN (gnb/srsgnb) kalau keduanya di host yang sama agar tidak saling "rebut" proses.
+        self._binary_hints = binary_hints or ["gnb", "nr-softmodem", "srsgnb"]
 
     # ---------------- kontrak adapter ----------------
     def list(self) -> List[dict]:
@@ -573,8 +577,9 @@ class SshRanAdapter:
             return
         self._last_fetch = now
         try:
+            _bins = " ".join(self._binary_hints)
             out, _ = self._exec(
-                "for name in gnb nr-softmodem srsgnb; do "
+                f"for name in {_bins}; do "
                 "m=$(ps -C $name --no-headers -o pid=,etime=,pcpu=,rss=,args= 2>/dev/null | head -1); "
                 "[ -n \"$m\" ] && echo \"PROC|$name|$m\"; done; "
                 "L=$(ls -t /home/ran/srsgnb*.log /home/ran/gnb*.log 2>/dev/null | head -1); "
@@ -778,11 +783,11 @@ class SshRanAdapter:
 # ---------------------------------------------------------------------------
 
 class SrsRanSshAdapter(SshRanAdapter):
-    """Adapter RAN khusus srsRAN gNB — monitoer proses 'gnb' saja via SSH.
+    """Adapter RAN khusus srsRAN gNB — monitor proses 'gnb' saja via SSH.
 
     Warisan dari SshRanAdapter, tapi override _maybe_refresh() supaya
     hanya mencari proses srsRAN (gnb), bukan OAI (nr-softmodem).
-    Env vars sama: SRSRAN_SSH_HOST / SRSRAN_SSH_USER / SRSRAN_SSH_PASSWORD / SRSRAN_SSH_PORT
+    Env vars: SRSRAN_SSH_HOST / SRSRAN_SSH_USER / SRSRAN_SSH_PASSWORD / SRSRAN_SSH_PORT
     """
 
     def __init__(self, ssh_host: str, ssh_user: str, ssh_password: str, ssh_port: int = 22):
@@ -1047,7 +1052,7 @@ def _build_ran_providers() -> dict:
 
     Dua provider:
       - oai    : OAI nr-softmodem (OAI_SSH_RAN_HOST)
-      - srsran : srsRAN gNB (SRSRAN_SSH_HOST)
+      - srsran : srsRAN gNB (SRSRAN_SSH_HOST — env var terpisah)
     """
     providers = {}
 
@@ -1059,8 +1064,9 @@ def _build_ran_providers() -> dict:
             ssh_user=os.environ.get("OAI_SSH_RAN_USER", "ran"),
             ssh_password=os.environ.get("OAI_SSH_RAN_PASSWORD", ""),
             ssh_port=int(os.environ.get("OAI_SSH_RAN_PORT", "22")),
+            binary_hints=["nr-softmodem"],
         )
-        desc = "OAI / srsRAN gNB (real via SSH)"
+        desc = "OAI nr-softmodem gNB (real via SSH)"
     else:
         adapter = RanAdapter()
         desc = "OpenAirInterface gNB (softmodem mock)"
