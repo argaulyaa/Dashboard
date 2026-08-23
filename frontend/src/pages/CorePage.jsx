@@ -106,11 +106,29 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
   return (
     <div className="max-w-[1400px] mx-auto">
       {/* Page Header */}
-      <div className="mb-8">
-        <h2 className="text-headline-md font-headline-md text-on-surface mb-2">Core Network Management</h2>
-        <p className="text-on-surface-variant">
-          Configure and monitor 5G Core Network functions across multiple providers.
-        </p>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-headline-md font-headline-md text-on-surface mb-2">Core Network Management</h2>
+          <p className="text-on-surface-variant">
+            Configure and monitor 5G Core Network functions across multiple providers.
+          </p>
+        </div>
+
+        {/* Current Operator Badge — pojok kanan atas */}
+        {activeMeta && (
+          <div className="shrink-0 glass-card border border-outline-variant rounded-2xl px-5 py-3 shadow-sm flex items-center gap-3">
+            <span className="material-symbols-outlined text-primary text-xl">
+              {activeMeta.icon || "cloud_done"}
+            </span>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Current Operator</p>
+              <p className="font-bold text-sm text-on-surface">{activeMeta.label}</p>
+              <span className={`text-[10px] font-bold ${HEALTH_BADGE_CLASS[health]} px-2 py-0.5 rounded-full`}>
+                ● {HEALTH_BADGE_LABEL[health]}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Provider Selector Tabs -- dirender dari data backend, jumlah tab
@@ -158,10 +176,6 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
                 <div className="bg-surface-container px-3 py-2 rounded-lg">
                   <p className="text-[10px] text-on-surface-variant font-bold uppercase">IPv4 Address</p>
                   <p className="font-mono text-sm">{heroView.ip}</p>
-                </div>
-                <div className="bg-surface-container px-3 py-2 rounded-lg">
-                  <p className="text-[10px] text-on-surface-variant font-bold uppercase">Current Operator</p>
-                  <p className="text-sm">{heroView.operator}</p>
                 </div>
               </div>
             </div>
