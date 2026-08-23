@@ -5,7 +5,7 @@
 # Build & push with the backend/ and frontend/ Dockerfiles first, then set
 # the repository/tag you pushed to (e.g. ghcr.io/argaulyaa/...).
 image:
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
   # override per component below
 
 backend:
