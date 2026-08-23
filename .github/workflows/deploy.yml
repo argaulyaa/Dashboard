@@ -54,8 +54,12 @@ jobs:
 
       - name: Deploy to K8s
         run: |
-          kubectl rollout restart deployment/oran-backend -n dashboard
-          kubectl rollout restart deployment/oran-frontend -n dashboard
+          kubectl set image deployment/oran-backend \
+            backend=${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
+            -n dashboard
+          kubectl set image deployment/oran-frontend \
+            frontend=${{ env.FRONTEND_IMAGE }}:${{ github.sha }} \
+            -n dashboard
           kubectl rollout status deployment/oran-backend -n dashboard --timeout=120s
           kubectl rollout status deployment/oran-frontend -n dashboard --timeout=120s
           kubectl get pods -n dashboard
