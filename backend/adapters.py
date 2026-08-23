@@ -774,6 +774,112 @@ class SshRanAdapter:
 
 
 # ---------------------------------------------------------------------------
+# srsRAN-specific SSH adapter
+# ---------------------------------------------------------------------------
+
+class SrsRanSshAdapter(SshRanAdapter):
+    """Adapter RAN khusus srsRAN gNB — monitoer proses 'gnb' saja via SSH.
+
+    Warisan dari SshRanAdapter, tapi override _maybe_refresh() supaya
+    hanya mencari proses srsRAN (gnb), bukan OAI (nr-softmodem).
+    Env vars sama: SRSRAN_SSH_HOST / SRSRAN_SSH_USER / SRSRAN_SSH_PASSWORD / SRSRAN_SSH_PORT
+    """
+
+    def __init__(self, ssh_host: str, ssh_user: str, ssh_password: str, ssh_port: int = 22):
+        super().__init__(ssh_host, ssh_user, ssh_password, ssh_port)
+
+    def _maybe_refresh(self):
+        now = time.time()
+        if now - self._last_fetch < self.CACHE_TTL:
+            return
+        self._last_fetch = now
+        try:
+            out, _ = self._exec(
+                "m=$(ps -C gnb --no-headers -o pid=,etime=,pcpu=,rss=,args= 2>/dev/null | head -1); "
+                "[ -n \"$m\" ] && echo \"PROC|gnb|$m\"; "
+                "L=$(ls -t /home/ran/gnb*.log 2>/dev/null | head -1); "
+                "echo \"LOG|$L\"; "
+                "echo \"UE|$(tail -2000 \"$L\" 2>/dev/null | grep -oiE 'rnti[ =]?0x[0-9a-f]+' | sort -u | wc -l)\"; "
+                "echo \"N2|$(sudo ss -Sn 2>/dev/null | grep ':38412' | grep -c ESTAB)\"; "
+                "echo \"E2|$(sudo ss -Sn 2>/dev/null | grep -E ':36421|:36422' | grep -c ESTAB)\"; "
+                "echo \"N2IP|$(sudo ss -Sn 2>/dev/null | grep ':38412' | grep ESTAB | grep -oE '[0-9.]+:38412' | head -1)\""
+            )
+        except Exception as e:
+            print(f"[SrsRanSshAdapter] SSH ke {self._ssh['host']} gagal: {e}", flush=True)
+            self._cache["gnb"] = self._down(f"SSH ke node RAN gagal: {e}")
+            return
+
+        gtype, proc = None, None
+        n2_count = e2_count = ue_count = 0
+        n2_ip = ""
+        for ln in out.splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            if ln.startswith("PROC|"):
+                parts = ln.split("|")
+                if len(parts) >= 3:
+                    gtype = parts[1]
+                    rest = parts[2].split(None, 4)
+                    if len(rest) >= 4:
+                        proc = {"pid": rest[0], "etime": rest[1], "pcpu": self._to_float(rest[2]),
+                                "rss_kb": self._to_float(rest[3]),
+                                "args": rest[4] if len(rest) > 4 else ""}
+            elif ln.startswith("LOG|"):
+                self._cfg["log"] = ln.split("|", 1)[1].strip() or "/home/ran/gnb.log"
+            elif ln.startswith("UE|"):
+                ue_count = int(ln.split("|", 1)[1] or 0)
+            elif ln.startswith("N2|"):
+                n2_count = int(ln.split("|", 1)[1] or 0)
+            elif ln.startswith("E2|"):
+                e2_count = int(ln.split("|", 1)[1] or 0)
+            elif ln.startswith("N2IP|"):
+                n2_ip = ln.split("|", 1)[1] or ""
+
+        if not proc:
+            self._cache["gnb"] = self._down("srsRAN gNB tidak jalan (proses 'gnb' tidak ditemukan di RAN)")
+            return
+
+        signature = f"{gtype}::{proc['args']}"
+        if self._cfg.get("_sig") != signature:
+            self._cfg = self._fetch_config(gtype, proc["args"])
+            self._cfg["_sig"] = signature
+
+        n2_desc = n2_ip if n2_ip else f"{n2_count} koneksi"
+        e2_desc = f"{e2_count} sesi E2" if e2_count else "tidak ada"
+        uptime = self._parse_etime(proc["etime"])
+        mem_gb = proc["rss_kb"] / (1024 * 1024)
+        mem_total = 15.9
+        mem_pct = round(min(100.0, mem_gb / mem_total * 100), 2)
+
+        detail = (
+            f"srsRAN gNB | n{self._cfg.get('band', '?')} "
+            f"{self._cfg.get('bw', '?')}MHz | ARFCN {self._cfg.get('arfcn', '?')} | PLMN {self._cfg.get('plmn', '?')} "
+            f"| N2: {n2_desc} | E2: {e2_desc}"
+        )
+        self._cache["gnb"] = {
+            "id": "gnb",
+            "name": "srsRAN gNB",
+            "kind": "srsRAN gNB",
+            "status": "healthy",
+            "detail": detail,
+            "host": self._ssh["host"],
+            "cpu_pct": round(proc["pcpu"], 2),
+            "mem_gb": round(mem_gb, 2),
+            "mem_pct": mem_pct,
+            "throughput_mbps": 0.0,
+            "port": 38412,
+            "latency_ms": 0.0,
+            "active_ues": ue_count if ue_count else 0,
+            "last_updated": time.time(),
+            "uptime_seconds": uptime,
+            "started_at": time.time() - uptime,
+        }
+        if "log" not in self._cfg:
+            self._cfg["log"] = self._guess_active_log(gtype)
+
+
+# ---------------------------------------------------------------------------
 # RIC adapters
 # ---------------------------------------------------------------------------
 
@@ -937,7 +1043,15 @@ def _build_core_providers() -> dict:
 
 
 def _build_ran_providers() -> dict:
-    """RAN provider — aktif real via SSH kalau OAI_SSH_RAN_HOST di-set, fallback mock."""
+    """RAN providers — aktif real via SSH kalau host di-set, fallback mock.
+
+    Dua provider:
+      - oai    : OAI nr-softmodem (OAI_SSH_RAN_HOST)
+      - srsran : srsRAN gNB (SRSRAN_SSH_HOST)
+    """
+    providers = {}
+
+    # --- OAI RAN ---
     ssh_host = os.environ.get("OAI_SSH_RAN_HOST", "") or None
     if ssh_host:
         adapter = SshRanAdapter(
@@ -950,14 +1064,34 @@ def _build_ran_providers() -> dict:
     else:
         adapter = RanAdapter()
         desc = "OpenAirInterface gNB (softmodem mock)"
-    return {
-        "oai": {
-            "label": "OAI RAN",
-            "icon": "settings_input_antenna",
-            "desc": desc,
-            "adapter": adapter,
-        },
+    providers["oai"] = {
+        "label": "OAI RAN",
+        "icon": "settings_input_antenna",
+        "desc": desc,
+        "adapter": adapter,
     }
+
+    # --- srsRAN ---
+    srsran_host = os.environ.get("SRSRAN_SSH_HOST", "") or None
+    if srsran_host:
+        srsran_adapter = SrsRanSshAdapter(
+            ssh_host=srsran_host,
+            ssh_user=os.environ.get("SRSRAN_SSH_USER", "ran"),
+            ssh_password=os.environ.get("SRSRAN_SSH_PASSWORD", ""),
+            ssh_port=int(os.environ.get("SRSRAN_SSH_PORT", "22")),
+        )
+        srsran_desc = "srsRAN gNB (real via SSH)"
+    else:
+        srsran_adapter = RanAdapter()
+        srsran_desc = "srsRAN gNB (mock)"
+    providers["srsran"] = {
+        "label": "srsRAN",
+        "icon": "cell_tower",
+        "desc": srsran_desc,
+        "adapter": srsran_adapter,
+    }
+
+    return providers
 
 
 DOMAIN_PROVIDERS = {
