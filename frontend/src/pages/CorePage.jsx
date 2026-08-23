@@ -51,11 +51,25 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
   const [restartingId, setRestartingId] = useState(null);
   const [logTarget, setLogTarget] = useState(null);
 
+  // Health semua non-default provider — di-fetch sekali saat providers pertama kali load.
+  // Default provider sudah punya data live dari WebSocket (`components` prop).
+  const [providerHealthMap, setProviderHealthMap] = useState({});
+
   useEffect(() => {
     fetchProviders("core")
       .then((list) => {
         setProviders(list);
         if (list.length) setActiveProvider(list[0].key);
+
+        // Fetch health semua provider non-default di background
+        list.slice(1).forEach(async (p) => {
+          try {
+            const comps = await fetchComponents("core", p.key);
+            setProviderHealthMap((prev) => ({ ...prev, [p.key]: domainHealth(comps) }));
+          } catch {
+            setProviderHealthMap((prev) => ({ ...prev, [p.key]: "down" }));
+          }
+        });
       })
       .catch(() => setProviders([]));
   }, []);
@@ -92,7 +106,28 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
     operator: hero?.reservation?.user || "-",
   };
 
+  // Current Operator — provider yang benar-benar sedang jalan (healthy/degraded),
+  // bukan sekadar tab yang sedang diklik. Cek semua provider:
+  //   • Default provider: health-nya dari WebSocket `components` (real-time).
+  //   • Provider lain: health-nya dari providerHealthMap (fetch saat mount).
+  // Provider pertama yang healthy dipilih; kalau tidak ada, yang degraded.
+  const currentOperator = useMemo(() => {
+    if (!providers.length) return null;
+    const defaultKey = providers[0].key;
+    const defaultHealth = domainHealth(components);
+    const allHealth = {
+      [defaultKey]: defaultHealth,
+      ...providerHealthMap,
+    };
+    const running =
+      providers.find((p) => allHealth[p.key] === "healthy") ||
+      providers.find((p) => allHealth[p.key] === "degraded");
+    if (!running) return null;
+    return { ...running, health: allHealth[running.key] };
+  }, [providers, components, providerHealthMap]);
+
   const activeCount = displayedComponents.filter((c) => c.status !== "down").length;
+
 
   const handleRestartRow = async (id) => {
     setRestartingId(id);
@@ -114,21 +149,26 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
           </p>
         </div>
 
-        {/* Current Operator Badge — pojok kanan atas */}
-        {activeMeta && (
-          <div className="shrink-0 glass-card border border-outline-variant rounded-2xl px-5 py-3 shadow-sm flex items-center gap-3">
-            <span className="material-symbols-outlined text-primary text-xl">
-              {activeMeta.icon || "cloud_done"}
+        {/* Current Operator Badge — pojok kanan atas, menunjukkan provider
+            yang BENAR-BENAR sedang jalan (bukan sekadar tab yang diklik) */}
+        <div className="shrink-0 glass-card border border-outline-variant rounded-2xl px-5 py-3 shadow-sm flex items-center gap-3">
+          <span className="material-symbols-outlined text-primary text-xl">
+            {currentOperator?.icon || "cloud_off"}
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Current Operator</p>
+            <p className="font-bold text-sm text-on-surface">
+              {currentOperator?.label ?? "None"}
+            </p>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+              currentOperator
+                ? HEALTH_BADGE_CLASS[currentOperator.health]
+                : "bg-surface-container text-on-surface-variant"
+            }`}>
+              ● {currentOperator ? HEALTH_BADGE_LABEL[currentOperator.health] : "NO ACTIVE PROVIDER"}
             </span>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Current Operator</p>
-              <p className="font-bold text-sm text-on-surface">{activeMeta.label}</p>
-              <span className={`text-[10px] font-bold ${HEALTH_BADGE_CLASS[health]} px-2 py-0.5 rounded-full`}>
-                ● {HEALTH_BADGE_LABEL[health]}
-              </span>
-            </div>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Provider Selector Tabs -- dirender dari data backend, jumlah tab
