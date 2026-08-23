@@ -60,7 +60,7 @@ frontend:
   #   NodePort  → http://<nodeIP>:30080  (simplest, no extra components)
   #   Ingress   → needs an ingress controller; see ingress below
   serviceType: NodePort
-  nodePort: 30080
+  nodePort: 30090
   ingress:
     enabled: false
     className: ""

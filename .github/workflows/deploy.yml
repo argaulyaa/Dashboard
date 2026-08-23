@@ -56,8 +56,14 @@ jobs:
 
       - name: Deploy to K8s via Helm
         run: |
+          # Hapus service lama dari deployment manual (kalau ada) supaya tidak
+          # konflik port dengan service yang dibuat Helm.
+          kubectl delete service oran-dashboard-frontend oran-dashboard-backend \
+            -n ${{ env.NAMESPACE }} --ignore-not-found=true
+
           helm upgrade --install ${{ env.HELM_RELEASE }} ./deploy/helm/oran-dashboard \
             --namespace ${{ env.NAMESPACE }} \
+            --create-namespace \
             --reuse-values \
             --set backend.image.tag=${{ github.sha }} \
             --set frontend.image.tag=${{ github.sha }} \
