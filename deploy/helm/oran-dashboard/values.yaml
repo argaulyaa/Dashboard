@@ -21,6 +21,9 @@ backend:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  # Optional: image pull secrets for GHCR private images
+  # e.g. - name: ghcr-secret
+  imagePullSecrets: []
   # Extra env vars (overrides for anything not covered below)
   extraEnv: {}
   oai:
@@ -56,6 +59,9 @@ frontend:
   image:
     repository: ghcr.io/argaulyaa/openran-dashboard-frontend
     tag: latest
+  # Optional: image pull secrets for GHCR private images
+  # e.g. - name: ghcr-secret
+  imagePullSecrets: []
   # Expose options:
   #   NodePort  → http://<nodeIP>:30080  (simplest, no extra components)
   #   Ingress   → needs an ingress controller; see ingress below
