@@ -9,6 +9,9 @@ env:
   REGISTRY: ghcr.io
   BACKEND_IMAGE: ghcr.io/argaulyaa/openran-dashboard-backend
   FRONTEND_IMAGE: ghcr.io/argaulyaa/openran-dashboard-frontend
+  # MUST stay identical to the existing Helm release that serves the site (deployments
+  # oran-backend/oran-frontend, NodePort 30090). Using any other name creates a duplicate,
+  # conflicting release while the real one never updates. Do not rename.
   HELM_RELEASE: oran
   NAMESPACE: dashboard
 
@@ -54,13 +57,34 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # ghcr.io is a private registry. The chart references the `ghcr-secret`
+      # dockerconfig secret via image.imagePullSecrets (see values.yaml) so the kubelet can
+      # pull the freshly-built images. This step ensures it exists; it is idempotent and
+      # keeps a pre-existing (working) secret on an established cluster.
+      # For a FRESH cluster, set GHCR_TOKEN (PAT with `read:packages`) and optionally
+      # GHCR_USERNAME as Actions secrets — GITHUB_TOKEN is only a fallback.
+      - name: Ensure ghcr.io pull secret
+        run: |
+          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          if ! kubectl get secret ghcr-secret -n ${{ env.NAMESPACE }} >/dev/null 2>&1; then
+            kubectl create secret docker-registry ghcr-secret -n ${{ env.NAMESPACE }} \
+              --docker-server=${{ env.REGISTRY }} \
+              --docker-username=${{ secrets.GHCR_USERNAME || github.actor }} \
+              --docker-password=${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }} \
+              --dry-run=client -o yaml | kubectl apply -f -
+          fi
+
       - name: Deploy to K8s via Helm
         run: |
-          helm upgrade ${{ env.HELM_RELEASE }} ./deploy/helm/oran-dashboard \
-            -n ${{ env.NAMESPACE }} \
-            --reuse-values \
+          # Image tag is pinned to the SHA just pushed (unique per build) and
+          # imagePullPolicy=Always, so every push deploys exactly the new build —
+          # no stale-image mismatch. Values/SSH creds/secret live in the chart so a
+          # plain upgrade renders the known-good state without --reuse-values.
+          helm upgrade --install ${{ env.HELM_RELEASE }} ./deploy/helm/oran-dashboard \
+            --namespace ${{ env.NAMESPACE }} \
+            --create-namespace \
             --set backend.image.tag=${{ github.sha }} \
             --set frontend.image.tag=${{ github.sha }} \
-            --set image.pullPolicy=Always \
+            --timeout 180s \
             --wait
           kubectl get pods -n ${{ env.NAMESPACE }}

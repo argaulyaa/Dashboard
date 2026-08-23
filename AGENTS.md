@@ -171,3 +171,26 @@ belum kebaca saat `adapters.py` membangun `CORE_PROVIDERS`.
   testbed OAI RAN sudah ada), tapi urutan aktual mengikuti instruksi
   pemilik repo di setiap sesi kerja — cek percakapan/issue terkait
   sebelum mulai kerja di domain ini.
+
+## Deploy ke K8s (CI/CD) - fakta permanen, jangan diubah tanpa sadar
+
+- Aplikasi dideploy ke cluster testbed via **Helm** dari workflow
+  `.github/workflows/deploy.yml` (push ke `main` / `workflow_dispatch`).
+- **Nama release WAJIB `oran`** (namespace `dashboard`). Resource yang melayani situs:
+  deployment `oran-backend` & `oran-frontend`, service NodePort `oran-frontend` port **30090**
+  di node `core`. Ganti nama release = bikin release duplikat yang konflik & situs tak pernah
+  diupdate. `env.HELM_RELEASE` di deploy.yml harus tetap `oran`.
+- ghcr.io **bersifat privat** - pod tak bisa menarik image tanpa auth. Chart me-render
+  `imagePullSecrets: [{"name":"ghcr-secret"}]` lewat `image.pullSecrets` di `values.yaml`
+  (template `backend-deployment.yaml` & `frontend-deployment.yaml`, sebagai sibling di bawah `spec:`).
+  CI memastikan secret ini ada (bikin kalau belum, idempotent, biarkan yang sudah jalan).
+  Untuk cluster baru set Actions secret `GHCR_TOKEN` (PAT `read:packages`) & opsional
+  `GHCR_USERNAME`; fallback-nya `GITHUB_TOKEN`.
+- Strategi image: CI men-tag image dengan `$github.sha` (unik per build) +
+  `image.pullPolicy: Always`. JANGAN deploy lewat `kubectl rollout restart` saja - itu tidak
+  meng-update tag image sehingga versi lama yang tercache tetap tersaji (mismatch).
+  JANGAN pakai `--reuse-values` - gagal di install pertama dan menyembunyikan drift config.
+- Kredensial SSH testbed (core `10.91.2.151`, ran `10.91.2.152`, user `core`/`ran`) sekarang
+  diset **sebagai default di `values.yaml`** (bukan hanya lewat `--set`), supaya
+  `helm upgrade` tanpa `--reuse-values` tetap me-render state known-good.
+  Backend & frontend di-pin ke node `core` (`nodeSelector`) agar jalur SSH/image konsisten.

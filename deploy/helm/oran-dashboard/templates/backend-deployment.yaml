@@ -17,6 +17,10 @@ spec:
         app.kubernetes.io/name: {{ include "oran-dashboard.fullname" . }}
         app.kubernetes.io/component: backend
     spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.backend.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -27,10 +31,6 @@ spec:
       {{- end }}
       {{- with .Values.backend.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.backend.imagePullSecrets }}
-      imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:

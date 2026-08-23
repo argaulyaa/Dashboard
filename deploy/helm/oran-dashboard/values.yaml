@@ -6,6 +6,11 @@
 # the repository/tag you pushed to (e.g. ghcr.io/argaulyaa/...).
 image:
   pullPolicy: Always
+  # ghcr.io is a private registry — this secret lets the kubelet pull the images.
+  # Managed by CI (created if missing) or by hand: `kubectl create secret docker-registry
+  # ghcr-secret -n dashboard --docker-server=ghcr.io --docker-username=<user> --docker-password=<PAT>`.
+  pullSecrets:
+    - name: ghcr-secret
   # override per component below
 
 backend:
@@ -17,13 +22,12 @@ backend:
     type: ClusterIP
     port: 8000
   resources: {}
-  # Optional: pin to a specific node (e.g. for local/ hostPath persistence)
-  nodeSelector: {}
+  # Pin backend to node `core` — it is the only node with the SSH routes to the
+  # testbed core/ran hosts and (historically) preloaded images. Matches live deploy.
+  nodeSelector:
+    kubernetes.io/hostname: core
   tolerations: []
   affinity: {}
-  # Optional: image pull secrets for GHCR private images
-  # e.g. - name: ghcr-secret
-  imagePullSecrets: []
   # Extra env vars (overrides for anything not covered below)
   extraEnv: {}
   oai:
@@ -31,7 +35,7 @@ backend:
     sshHost: "10.91.2.151"
     sshPort: "22"
     sshUser: "core"
-    sshPassword: "CHANGE_ME"
+    sshPassword: "telmat123"
     containers: '{"amf":"oai-amf","smf":"oai-smf","upf":"oai-upf","nrf":"oai-nrf","ausf":"oai-ausf","udm":"oai-udm","udr":"oai-udr","mysql":"mysql","ext-dn":"oai-ext-dn"}'
   ran:
     # RAN gNB — detect OAI nr-softmodem / srsRAN `gnb` via SSH. Set sshHost to
@@ -39,7 +43,7 @@ backend:
     sshHost: "10.91.2.152"
     sshPort: "22"
     sshUser: "ran"
-    sshPassword: "CHANGE_ME"
+    sshPassword: "telmat123"
 
 auth:
   # Format "user:pass,user2:pass2" (default admin:admin)
@@ -59,9 +63,8 @@ frontend:
   image:
     repository: ghcr.io/argaulyaa/openran-dashboard-frontend
     tag: latest
-  # Optional: image pull secrets for GHCR private images
-  # e.g. - name: ghcr-secret
-  imagePullSecrets: []
+  nodeSelector:
+    kubernetes.io/hostname: core
   # Expose options:
   #   NodePort  → http://<nodeIP>:30080  (simplest, no extra components)
   #   Ingress   → needs an ingress controller; see ingress below
