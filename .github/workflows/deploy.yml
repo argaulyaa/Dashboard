@@ -56,7 +56,7 @@ jobs:
 
       - name: Deploy to K8s via Helm
         run: |
-          helm upgrade ${{ env.HELM_RELEASE }} ./deploy/helm/oran-dashboard \
+          helm upgrade --install ${{ env.HELM_RELEASE }} ./deploy/helm/oran-dashboard \
             --namespace ${{ env.NAMESPACE }} \
             --reuse-values \
             --set backend.image.tag=${{ github.sha }} \
