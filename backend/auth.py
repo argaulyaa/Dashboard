@@ -123,12 +123,16 @@ OTP_TTL_SECONDS = 10 * 60  # 10 menit
 
 
 def create_pending_registration(
-    username: str, password: str, email: str, full_name: str = "", role: str = "engineer"
+    username: str, password: str, email: str, full_name: str = "", role: str = "viewer"
 ) -> str:
     """
     Buat pending registration (belum aktif sampai OTP diverifikasi).
     Kirim OTP ke email, return otp_code (untuk testing/fallback).
     Raise ValueError jika username/email sudah dipakai atau input tidak valid.
+
+    Security: self-register SELALU menghasilkan role 'viewer' — parameter
+    `role` sengaja DIABAIKAN agar client tidak bisa memilih role sendiri.
+    Role hanya bisa diubah oleh admin via PUT /api/auth/users/{username}/role.
     """
     import random
 
@@ -144,9 +148,8 @@ def create_pending_registration(
     if policy_error:
         raise ValueError(policy_error)
 
-    role = role.lower().strip()
-    if role not in ["engineer", "viewer"]:
-        role = "engineer"
+    # Security: role dari client diabaikan — self-register selalu 'viewer'.
+    role = "viewer"
 
     salt_hex, hash_hex = _hash_password(password)
     otp_code = f"{random.randint(0, 999999):06d}"
@@ -247,8 +250,13 @@ def resend_registration_otp(username: str) -> bool:
     return True
 
 
-def register_user(username: str, password: str, full_name: str = "", role: str = "engineer", email: str = "") -> dict:
-    """Creates a new user account in database (tanpa email verification — dipakai oleh admin)."""
+def register_user(username: str, password: str, full_name: str = "", role: str = "viewer", email: str = "") -> dict:
+    """Creates a new user account in database (tanpa email verification — dipakai oleh admin).
+
+    Security: parameter `role` DIABAIKAN (hardcoded 'viewer') — akun yang
+    dibuat lewat jalur ini tidak pernah bisa dapat role 'engineer' dari
+    client. Role hanya bisa diubah oleh admin via
+    PUT /api/auth/users/{username}/role."""
     username = username.strip()
     if not username:
         raise ValueError("username_required")
@@ -256,9 +264,8 @@ def register_user(username: str, password: str, full_name: str = "", role: str =
     if policy_error:
         raise ValueError(policy_error)
 
-    role = role.lower().strip()
-    if role not in ["engineer", "viewer"]:
-        role = "engineer"
+    # Security: role dari client diabaikan — akun baru selalu 'viewer'.
+    role = "viewer"
 
     salt_hex, hash_hex = _hash_password(password)
 

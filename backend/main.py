@@ -15,7 +15,7 @@ from ssh_proxy import run_ssh_bridge
 from adapters import DOMAIN_PROVIDERS
 import reservations
 from database import get_db_session
-from models import AuditLogModel
+from models import AuditLogModel, UserModel
 from auth import (
     authenticate, register_user, delete_user, list_registered_users,
     require_user, get_session_info, get_profile, update_full_name, change_password,
@@ -73,7 +73,12 @@ class RegisterRequest(BaseModel):
     username: str
     email: str
     password: str
-    role: str = "engineer"
+    # NOTE: no `role` field — self-register is ALWAYS 'viewer' (server-enforced).
+
+
+class UpdateRoleRequest(BaseModel):
+    """Admin-only payload: role baru user ('engineer' | 'viewer')."""
+    role: str
 
 
 class VerifyOtpRequest(BaseModel):
@@ -159,11 +164,10 @@ def register(body: RegisterRequest, request: Request):
             password=body.password,
             email=body.email,
             full_name=body.full_name,
-            role=body.role,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
-    log_audit(body.username, "REGISTER_PENDING", detail=f"Email: {body.email}", ip=client_ip)
+    log_audit(body.username, "REGISTER_PENDING", detail=f"Email: {body.email}; Role: viewer", ip=client_ip)
     return {"ok": True, "username": body.username, "message": "OTP sent to email. Please verify."}
 
 
@@ -189,7 +193,12 @@ def verify_email(body: VerifyOtpRequest, request: Request):
             login_time=_time.time(),
             expires_at=_time.time() + SESSION_TTL_SECONDS,
         ))
-    log_audit(body.username, "REGISTER_VERIFIED", detail=f"Email: {user_info['email']}", ip=client_ip)
+    log_audit(
+        body.username,
+        "REGISTER_VERIFIED",
+        detail=f"Email: {user_info['email']}; Role: {user_info.get('role', 'viewer')}",
+        ip=client_ip,
+    )
     return {"ok": True, "token": token, "user": user_info["username"], "role": user_info["role"]}
 
 
@@ -217,6 +226,30 @@ def remove_user(username: str, current_user: str = Depends(require_user)):
     except ValueError as e:
         raise HTTPException(404, str(e))
     return {"deleted": username}
+
+
+@app.put("/api/auth/users/{username}/role")
+def update_user_role(username: str, body: UpdateRoleRequest, current_user: str = Depends(require_user)):
+    """Admin-only: change a user's role between 'engineer' and 'viewer'.
+
+    Pola sama dengan DELETE /api/auth/users/{username}: hanya user 'admin'
+    (username atau role admin) yang boleh memanggil. Role akun 'admin'
+    sendiri tidak boleh diubah."""
+    if current_user != "admin" and get_user_role(current_user) != "admin":
+        raise HTTPException(403, "Only admin can change user roles.")
+    new_role = body.role.lower().strip()
+    if new_role not in ("engineer", "viewer"):
+        raise HTTPException(400, "invalid_role: must be 'engineer' or 'viewer'")
+    if username == "admin":
+        raise HTTPException(403, "cannot_change_admin_role")
+    with get_db_session() as db:
+        user = db.query(UserModel).filter(UserModel.username == username).first()
+        if not user:
+            raise HTTPException(404, "user_not_found")
+        old_role = user.role or "engineer"
+        user.role = new_role
+    log_audit(current_user, "ROLE_CHANGE", detail=f"@{username}: {old_role} -> {new_role}")
+    return {"ok": True, "username": username, "role": new_role}
 
 
 @app.get("/api/audit-logs")

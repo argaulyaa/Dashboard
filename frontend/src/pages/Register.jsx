@@ -24,7 +24,6 @@ export default function Register({ onLoginSuccess }) {
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRoleState] = useState("engineer");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -42,7 +41,8 @@ export default function Register({ onLoginSuccess }) {
 
     setIsSubmitting(true);
     try {
-      await register(fullName, username, email, password, role);
+      // No role field — backend always assigns 'viewer' for self-register.
+      await register(fullName, username, email, password);
       // Backend mengirim OTP ke email — arahkan ke halaman verifikasi
       navigate("/verify", { state: { username, email } });
     } catch (err) {
@@ -138,28 +138,6 @@ export default function Register({ onLoginSuccess }) {
                   onChange={(e) => setUsername(e.target.value)}
                   disabled={isSubmitting}
                 />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-on-surface-variant block" htmlFor="role">
-                Account Role
-              </label>
-              <div className="relative group">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">
-                  admin_panel_settings
-                </span>
-                <select
-                  className="w-full bg-white border border-outline-variant rounded-lg pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm font-medium"
-                  id="role"
-                  name="role"
-                  value={role}
-                  onChange={(e) => setRoleState(e.target.value)}
-                  disabled={isSubmitting}
-                >
-                  <option value="engineer">Engineer (Full Control & Reservations)</option>
-                  <option value="viewer">Viewer (Read-Only Telemetry)</option>
-                </select>
               </div>
             </div>
 

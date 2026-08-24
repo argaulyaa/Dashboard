@@ -34,11 +34,12 @@ export async function login(username, password) {
   return data;
 }
 
-export async function register(fullName, username, email, password, role = "engineer") {
+// NOTE: no role parameter — self-register is always 'viewer' (backend-enforced).
+export async function register(fullName, username, email, password) {
   const res = await fetch("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ full_name: fullName, username, email, password, role }),
+    body: JSON.stringify({ full_name: fullName, username, email, password }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

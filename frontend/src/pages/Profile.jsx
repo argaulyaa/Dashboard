@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getToken, fetchProfile, updateProfile, changePassword, logout } from "../auth.js";
-import { fetchUsers, deleteUser } from "../api.js";
+import { fetchUsers, deleteUser, updateUserRole } from "../api.js";
 import { getRole } from "../user.js";
 
 function formatDateTime(ts) {
@@ -69,6 +69,7 @@ export default function Profile({ currentUser, opsCount = 0, lastTelemetryAt }) 
   const [usersList, setUsersList] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [deletingUser, setDeletingUser] = useState(null);
+  const [changingRole, setChangingRole] = useState(null);
 
   const isAdmin = currentUser === "admin" || getRole() === "admin";
 
@@ -120,6 +121,19 @@ export default function Profile({ currentUser, opsCount = 0, lastTelemetryAt }) 
       alert(e.message || "Failed to delete user.");
     } finally {
       setDeletingUser(null);
+    }
+  };
+
+  const handleChangeRole = async (targetUsername, newRole, currentRole) => {
+    if (currentRole === newRole) return;
+    setChangingRole(targetUsername);
+    try {
+      await updateUserRole(targetUsername, newRole);
+      await loadUsersList();
+    } catch (e) {
+      alert(e.message || "Failed to update user role.");
+    } finally {
+      setChangingRole(null);
     }
   };
 
@@ -391,14 +405,36 @@ export default function Profile({ currentUser, opsCount = 0, lastTelemetryAt }) 
                       </span>
                     </td>
                     <td className="px-8 py-3 text-right">
-                      <button
-                        className="px-3 py-1 bg-error-container text-on-error-container text-xs font-bold rounded-lg hover:bg-error hover:text-white transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5 ml-auto"
-                        onClick={() => handleRemoveUser(u.username)}
-                        disabled={deletingUser === u.username}
-                      >
-                        <span className="material-symbols-outlined text-sm">delete</span>
-                        {deletingUser === u.username ? "Deleting..." : "Delete Account"}
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        {u.role !== "engineer" && (
+                          <button
+                            className="px-3 py-1 bg-primary/10 text-primary text-xs font-bold rounded-lg hover:bg-primary hover:text-white transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
+                            onClick={() => handleChangeRole(u.username, "engineer", u.role)}
+                            disabled={changingRole === u.username}
+                          >
+                            <span className="material-symbols-outlined text-sm">engineering</span>
+                            {changingRole === u.username ? "Updating..." : "Jadikan Engineer"}
+                          </button>
+                        )}
+                        {u.role !== "viewer" && (
+                          <button
+                            className="px-3 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-lg hover:bg-amber-500 hover:text-white transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
+                            onClick={() => handleChangeRole(u.username, "viewer", u.role)}
+                            disabled={changingRole === u.username}
+                          >
+                            <span className="material-symbols-outlined text-sm">visibility</span>
+                            {changingRole === u.username ? "Updating..." : "Jadikan Viewer"}
+                          </button>
+                        )}
+                        <button
+                          className="px-3 py-1 bg-error-container text-on-error-container text-xs font-bold rounded-lg hover:bg-error hover:text-white transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
+                          onClick={() => handleRemoveUser(u.username)}
+                          disabled={deletingUser === u.username}
+                        >
+                          <span className="material-symbols-outlined text-sm">delete</span>
+                          {deletingUser === u.username ? "Deleting..." : "Delete Account"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

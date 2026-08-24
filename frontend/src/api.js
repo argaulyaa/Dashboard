@@ -100,6 +100,17 @@ export async function deleteUser(username) {
   return res.json();
 }
 
+// Admin-only: change a user's role ("engineer" | "viewer").
+export async function updateUserRole(username, role) {
+  const res = await fetch(`${BASE}/auth/users/${encodeURIComponent(username)}/role`, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) throw new Error(`Failed to update role for ${username}`);
+  return res.json();
+}
+
 export async function fetchAuditLogs() {
   const res = await fetch(`${BASE}/audit-logs`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to fetch audit logs");
