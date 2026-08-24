@@ -5,15 +5,6 @@ import LogsModal from "../components/LogsModal.jsx";
 
 
 
-const XAPP_KIND = "near-RT RIC xApp";
-
-// Ikon per xApp, biar tidak semua pakai ikon generik yang sama.
-const XAPP_ICON = {
-  "xapp-kpimon": "monitoring",
-  "xapp-anomaly": "troubleshoot",
-  "xapp-healer": "healing",
-};
-
 // Data referensi Service Model E2 -- ini spesifikasi standar O-RAN, bukan
 // telemetry per-instance, jadi wajar tetap statis sampai ada endpoint nyata
 // (misalnya /api/ric/service-models kalau nanti disambungkan ke FlexRIC SDK).
@@ -92,7 +83,6 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
   const activeMeta = providers.find((p) => p.key === activeProvider) || providers[0] || { label: "FlexRIC", icon: "memory", desc: "FlexRIC near-RT RIC & xApps" };
   const displayedComponents = isDefaultProvider ? components : (providerComponents || []);
 
-  const xapps = displayedComponents.filter((c) => c.kind === XAPP_KIND);
   // "non-RT RIC" mewakili controller secara keseluruhan di kartu utama
   const hero = displayedComponents.find((c) => c.id === "nonrt-ric") || displayedComponents[0];
 
@@ -168,7 +158,7 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
       ) : (
       <div className="grid grid-cols-12 gap-6">
         {/* Main Status Card */}
-        <div className="col-span-12 lg:col-span-8 bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-[0_4px_12px_rgba(0,0,0,0.06)]">
+        <div className="col-span-12 bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-[0_4px_12px_rgba(0,0,0,0.06)]">
           <div className="flex justify-between items-start mb-6">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center">
@@ -248,44 +238,6 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
             onClose={() => setLogTarget(null)}
           />
         )}
-
-        {/* Active xApps Card */}
-        <div className="col-span-12 lg:col-span-4 bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden flex flex-col shadow-[0_4px_12px_rgba(0,0,0,0.06)]">
-          <div className="p-4 border-b border-outline-variant flex justify-between items-center">
-            <h3 className="text-title-md font-title-md">Active xApps</h3>
-            <span className="text-xs font-bold text-primary">{xapps.length} TOTAL</span>
-          </div>
-          <div className="flex-1 p-4 space-y-3">
-            {xapps.length === 0 && (
-              <div className="text-on-surface-variant text-xs font-mono py-3">No xApps registered.</div>
-            )}
-            {xapps.map((x) => (
-              <button
-                key={x.id}
-                onClick={() => onSelect(x)}
-                className="w-full flex items-center justify-between p-3 bg-surface rounded-lg border border-outline-variant/50 hover:bg-surface-container-low transition-colors text-left"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="material-symbols-outlined text-primary">{XAPP_ICON[x.id] ?? "extension"}</span>
-                  <span className="text-sm font-medium">{x.name}</span>
-                </div>
-                <span
-                  className={`px-2 py-0.5 text-[10px] font-bold rounded ${
-                    STATUS_PILL[x.status] ?? "bg-surface-container-high text-on-surface-variant"
-                  }`}
-                >
-                  {(STATUS_LABEL[x.status] ?? x.status).toUpperCase()}
-                </span>
-              </button>
-            ))}
-          </div>
-          <button
-            className="w-full py-3 bg-surface-container-low text-primary text-xs font-bold hover:bg-surface-container transition-colors"
-            onClick={() => hero && onSelect(hero)}
-          >
-            MANAGE xAPPS
-          </button>
-        </div>
 
         {/* Live Telemetry Event Stream */}
         <div className="col-span-12 bg-surface-container-lowest border border-outline-variant rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)]">
