@@ -6,7 +6,7 @@ import {
   fetchMyReservations,
   fetchAllReservations,
 } from "../api.js";
-import { getRole } from "../user.js";
+
 
 const DOMAIN_ICON = {
   core: "memory",
@@ -590,13 +590,6 @@ export default function ReservationPage({ data, currentUser, onReservationChange
                 />
               </div>
 
-              {getRole() === "viewer" && (
-                <div className="p-3 bg-amber-100 text-amber-900 border border-amber-300 text-xs rounded-lg font-medium flex items-center gap-2">
-                  <span className="material-symbols-outlined text-amber-700 text-sm">lock</span>
-                  <span>Viewer account is read-only. Only Engineers can create reservations.</span>
-                </div>
-              )}
-
               {modalError && (
                 <div className="p-3 bg-error-container text-on-error-container text-xs rounded-lg font-medium">
                   {modalError}
@@ -615,8 +608,8 @@ export default function ReservationPage({ data, currentUser, onReservationChange
               <button
                 className="px-6 py-2 bg-primary text-on-primary font-label-lg text-label-lg rounded-lg shadow-md hover:bg-primary-container transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={handleConfirmReservation}
-                disabled={submitting || getRole() === "viewer"}
-                title={getRole() === "viewer" ? "Viewers cannot create reservations" : ""}
+                disabled={submitting}
+                title=""
               >
                 {submitting
                   ? "Booking..."

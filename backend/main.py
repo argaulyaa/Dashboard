@@ -19,7 +19,7 @@ from models import AuditLogModel, UserModel, ActiveProviderModel
 from auth import (
     authenticate, register_user, delete_user, list_registered_users,
     require_user, get_session_info, get_profile, update_full_name, change_password,
-    get_user_role, require_engineer, init_auth_data,
+    get_user_role, require_operator, require_admin, init_auth_data,
     create_pending_registration, verify_registration_otp, resend_registration_otp,
     request_password_reset, resend_password_reset_otp,
     verify_password_reset_otp, confirm_password_reset,
@@ -75,11 +75,11 @@ class RegisterRequest(BaseModel):
     username: str
     email: str
     password: str
-    # NOTE: no `role` field — self-register is ALWAYS 'viewer' (server-enforced).
+    # NOTE: no `role` field — self-register is ALWAYS 'user' (server-enforced).
 
 
 class UpdateRoleRequest(BaseModel):
-    """Admin-only payload: role baru user ('engineer' | 'viewer')."""
+    """Admin-only payload: role baru user ('user' | 'admin')."""
     role: str
 
 
@@ -185,9 +185,9 @@ def get_active_provider(domain: str, current_user: str = Depends(require_user)):
 
 @app.post("/api/{domain}/activate-provider")
 def activate_provider(
-    domain: str, body: ActivateProviderRequest, current_user: str = Depends(require_engineer)
+    domain: str, body: ActivateProviderRequest, current_user: str = Depends(require_operator)
 ):
-    """Aktifkan satu provider core. Engineer/admin only.
+    """Aktifkan satu provider core. User/admin only.
 
     Eksklusif by design: tabel active_providers primary key-nya 'domain',
     jadi aktivasi provider baru otomatis MENGGANTI provider aktif sebelumnya.
@@ -223,8 +223,8 @@ def activate_provider(
 
 
 @app.post("/api/{domain}/deactivate-provider")
-def deactivate_provider(domain: str, current_user: str = Depends(require_engineer)):
-    """Nonaktifkan provider yang sedang aktif untuk domain ini. Engineer/admin only."""
+def deactivate_provider(domain: str, current_user: str = Depends(require_operator)):
+    """Nonaktifkan provider yang sedang aktif untuk domain ini. User/admin only."""
     if domain not in DOMAINS:
         raise HTTPException(404, f"Unknown domain '{domain}'")
     with get_db_session() as db:
@@ -277,7 +277,7 @@ def register(body: RegisterRequest, request: Request):
                 },
             )
         raise
-    log_audit(body.username, "REGISTER_PENDING", detail=f"Email: {body.email}; Role: viewer", ip=client_ip)
+    log_audit(body.username, "REGISTER_PENDING", detail=f"Email: {body.email}; Role: user", ip=client_ip)
     return {"ok": True, "username": body.username, "message": "OTP sent to email. Please verify."}
 
 
@@ -306,7 +306,7 @@ def verify_email(body: VerifyOtpRequest, request: Request):
     log_audit(
         body.username,
         "REGISTER_VERIFIED",
-        detail=f"Email: {user_info['email']}; Role: {user_info.get('role', 'viewer')}",
+        detail=f"Email: {user_info['email']}; Role: {user_info.get('role', 'user')}",
         ip=client_ip,
     )
     return {"ok": True, "token": token, "user": user_info["username"], "role": user_info["role"]}
@@ -352,7 +352,7 @@ def remove_user(username: str, current_user: str = Depends(require_user)):
 
 @app.put("/api/auth/users/{username}/role")
 def update_user_role(username: str, body: UpdateRoleRequest, current_user: str = Depends(require_user)):
-    """Admin-only: change a user's role between 'engineer' and 'viewer'.
+    """Admin-only: change a user's role between 'user' and 'admin'.
 
     Pola sama dengan DELETE /api/auth/users/{username}: hanya user 'admin'
     (username atau role admin) yang boleh memanggil. Role akun 'admin'
@@ -360,24 +360,23 @@ def update_user_role(username: str, body: UpdateRoleRequest, current_user: str =
     if current_user != "admin" and get_user_role(current_user) != "admin":
         raise HTTPException(403, "Only admin can change user roles.")
     new_role = body.role.lower().strip()
-    if new_role not in ("engineer", "viewer"):
-        raise HTTPException(400, "invalid_role: must be 'engineer' or 'viewer'")
+    if new_role not in ("user", "admin"):
+        raise HTTPException(400, "invalid_role: must be 'user' or 'admin'")
     if username == "admin":
         raise HTTPException(403, "cannot_change_admin_role")
     with get_db_session() as db:
         user = db.query(UserModel).filter(UserModel.username == username).first()
         if not user:
             raise HTTPException(404, "user_not_found")
-        old_role = user.role or "engineer"
+        old_role = get_user_role(username)
         user.role = new_role
     log_audit(current_user, "ROLE_CHANGE", detail=f"@{username}: {old_role} -> {new_role}")
     return {"ok": True, "username": username, "role": new_role}
 
 
 @app.get("/api/audit-logs")
-def get_audit_logs(current_user: str = Depends(require_user)):
-    if current_user != "admin" and get_user_role(current_user) != "admin":
-        raise HTTPException(403, "Only admin can view audit logs.")
+def get_audit_logs(current_user: str = Depends(require_admin)):
+    """RBAC 2-role: audit log HANYA bisa dibaca admin (owner decision)."""
     with get_db_session() as db:
         logs = db.query(AuditLogModel).order_by(AuditLogModel.timestamp.desc()).limit(100).all()
         return [l.to_dict() for l in logs]
@@ -509,10 +508,10 @@ async def restart_component(
     domain: str, comp_id: str, provider: str = None, authorization: str = Header(default="")
 ):
     current_user = require_user(authorization)
-    if get_user_role(current_user) not in ["engineer", "admin"]:
+    if get_user_role(current_user) != "admin" and get_user_role(current_user) != "user":
         raise HTTPException(
             403,
-            detail="Viewer role is not allowed to restart components."
+            detail="This action requires an operator role (user/admin)."
         )
     adapter = _get_adapter(domain, provider)
     result = await adapter.restart(comp_id)
@@ -553,13 +552,13 @@ def get_reservation(domain: str, comp_id: str):
 @app.post("/api/{domain}/components/{comp_id}/reservation")
 def create_reservation(domain: str, comp_id: str, body: ReserveRequest):
     _get_adapter(domain)
-    if get_user_role(body.user) not in ["engineer", "admin"]:
+    if get_user_role(body.user) not in ["user", "admin"]:
         raise HTTPException(
             403,
             detail={
                 "ok": False,
-                "reason": "viewer_permission_denied",
-                "message": "Viewer role is not allowed to create reservations.",
+                "reason": "permission_denied",
+                "message": "This action requires an operator role (user/admin).",
             },
         )
     result = reservations.reserve(

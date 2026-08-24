@@ -13,7 +13,8 @@ class UserModel(Base):
     email = Column(String(256), nullable=True, index=True, unique=True)
     salt = Column(String(64), nullable=True)
     hash = Column(String(128), nullable=True)
-    role = Column(String(32), default="engineer", nullable=False)
+    # RBAC 2-role: 'user' | 'admin' (nilai legacy dibaca sebagai 'user')
+    role = Column(String(32), default="user", nullable=False)
     created_at = Column(Float, default=time.time, nullable=False)
 
     def to_dict(self) -> dict:
@@ -21,7 +22,7 @@ class UserModel(Base):
             "username": self.username,
             "full_name": self.full_name or "",
             "email": self.email or "",
-            "role": self.role or "engineer",
+            "role": self.role or "user",
             "editable": True,
         }
 
@@ -35,7 +36,8 @@ class PendingRegistrationModel(Base):
     username = Column(String(64), primary_key=True, index=True)
     email = Column(String(256), nullable=False, index=True)
     full_name = Column(String(128), default="", nullable=False)
-    role = Column(String(32), default="engineer", nullable=False)
+    # RBAC 2-role: self-register selalu 'user'
+    role = Column(String(32), default="user", nullable=False)
     salt = Column(String(64), nullable=False)
     hash = Column(String(128), nullable=False)
     otp_code = Column(String(8), nullable=False)

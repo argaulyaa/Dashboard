@@ -1,12 +1,9 @@
 import React from "react";
-import { useParams, Link, Navigate } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import SshTerminal from "../components/ConsoleTerminal.jsx";
-import { getRole } from "../user.js";
 
 export default function SshPage({ data, currentUser }) {
-  if (getRole() === "viewer") {
-    return <Navigate to="/" replace />;
-  }
+  // RBAC 2-role: 'user' & 'admin' sama-sama boleh akses Console SSH.
 
   const { domain, componentId } = useParams();
   const component = (data[domain] || []).find((c) => c.id === componentId);

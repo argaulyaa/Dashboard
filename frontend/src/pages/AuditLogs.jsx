@@ -27,6 +27,7 @@ export default function AuditLogs({ currentUser }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedAction, setSelectedAction] = useState("ALL");
 
+  // RBAC 2-role: audit log admin-only (backend menegakkan dengan require_admin).
   const isAdmin = currentUser === "admin" || getRole() === "admin";
 
   const loadLogs = async () => {

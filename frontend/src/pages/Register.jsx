@@ -41,7 +41,7 @@ export default function Register({ onLoginSuccess }) {
 
     setIsSubmitting(true);
     try {
-      // No role field — backend always assigns 'viewer' for self-register.
+      // No role field — backend always assigns 'user' for self-register.
       await register(fullName, username, email, password);
       // Backend mengirim OTP ke email — arahkan ke halaman verifikasi
       navigate("/verify", { state: { username, email } });

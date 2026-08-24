@@ -91,14 +91,14 @@ export default function ControlDrawer({ domain, component, currentUser, onClose,
         <button
           className="font-sans text-[13px] font-semibold px-4 py-2.5 rounded-lg border border-down/40 bg-transparent text-down cursor-pointer w-full hover:bg-down/[0.08] disabled:opacity-50 disabled:cursor-not-allowed"
           onClick={handleRestart}
-          disabled={busyRestart || component.status === "restarting" || getRole() === "viewer"}
-          title={getRole() === "viewer" ? "Viewers cannot restart components" : ""}
+          disabled={busyRestart || component.status === "restarting"}
+          title=""
         >
           {busyRestart || component.status === "restarting" ? "Restarting..." : "Restart Component"}
         </button>
       </div>
 
-      {component.host && getRole() !== "viewer" && (
+      {component.host && (
         <div className="border-t border-panel-border pt-4 flex flex-col gap-2.5">
           <h3 className="text-[13px] m-0 text-dim font-mono uppercase tracking-wide">
             Console Access

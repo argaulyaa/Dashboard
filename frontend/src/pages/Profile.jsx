@@ -399,31 +399,32 @@ export default function Profile({ currentUser, opsCount = 0, lastTelemetryAt }) 
                     </td>
                     <td className="px-8 py-3">
                       <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                        u.role === "viewer" ? "bg-amber-100 text-amber-800" : "bg-primary/10 text-primary"
+                        u.role === "admin" ? "bg-primary/10 text-primary" : "bg-surface-container-high text-on-surface-variant"
                       }`}>
-                        {u.role || "engineer"}
+                        {/* RBAC 2-role: nilai lama ('engineer'/'viewer') sudah dinormalisasi backend jadi 'user' */}
+                        {u.role || "user"}
                       </span>
                     </td>
                     <td className="px-8 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {u.role !== "engineer" && (
+                        {u.role !== "admin" && (
                           <button
                             className="px-3 py-1 bg-primary/10 text-primary text-xs font-bold rounded-lg hover:bg-primary hover:text-white transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
-                            onClick={() => handleChangeRole(u.username, "engineer", u.role)}
+                            onClick={() => handleChangeRole(u.username, "admin", u.role)}
                             disabled={changingRole === u.username}
                           >
-                            <span className="material-symbols-outlined text-sm">engineering</span>
-                            {changingRole === u.username ? "Updating..." : "Jadikan Engineer"}
+                            <span className="material-symbols-outlined text-sm">shield_person</span>
+                            {changingRole === u.username ? "Updating..." : "Jadikan Admin"}
                           </button>
                         )}
-                        {u.role !== "viewer" && (
+                        {u.role !== "user" && (
                           <button
-                            className="px-3 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-lg hover:bg-amber-500 hover:text-white transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
-                            onClick={() => handleChangeRole(u.username, "viewer", u.role)}
+                            className="px-3 py-1 bg-surface-container-high text-on-surface-variant text-xs font-bold rounded-lg hover:bg-outline hover:text-white transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
+                            onClick={() => handleChangeRole(u.username, "user", u.role)}
                             disabled={changingRole === u.username}
                           >
-                            <span className="material-symbols-outlined text-sm">visibility</span>
-                            {changingRole === u.username ? "Updating..." : "Jadikan Viewer"}
+                            <span className="material-symbols-outlined text-sm">person</span>
+                            {changingRole === u.username ? "Updating..." : "Jadikan User"}
                           </button>
                         )}
                         <button

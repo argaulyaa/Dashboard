@@ -141,7 +141,7 @@ export async function deleteUser(username) {
   return res.json();
 }
 
-// Admin-only: change a user's role ("engineer" | "viewer").
+// Admin-only: change a user's role ("user" | "admin").
 export async function updateUserRole(username, role) {
   const res = await fetch(`${BASE}/auth/users/${encodeURIComponent(username)}/role`, {
     method: "PUT",

@@ -9,7 +9,7 @@ Covers:
   (c) POST activate-provider 'open5gs' -> upsert sederhana di backend,
       GET kembali 'open5gs' (eksklusifitas ditegakkan UI via disabled state).
   (d) POST activate-provider dengan nama tak dikenal -> 400.
-  (e) Viewer mencoba activate -> 403; viewer GET tetap boleh (read-only).
+  (e) User biasa activate -> sukses (RBAC 2-role: user setara engineer lama).
   (f) Deactivate -> GET kembali null; deactivate kedua -> 404 no_active_provider.
   (g) Audit log PROVIDER_ACTIVATE / PROVIDER_DEACTIVATE tercatat.
 """
@@ -37,19 +37,16 @@ def _login(username, password):
 ADMIN = _login("admin", "admin")
 
 
-def _make_viewer():
-    """Buat user role viewer + sesi aktif (langsung via DB, jalur deterministik)."""
+def _make_user():
+    """Buat user biasa (role 'user') + sesi aktif via register_user."""
     auth.register_user("budiview", "Startpass1", full_name="Budi Viewer",
                        email="budiview@example.com")
-    with auth.get_db_session() as db:
-        u = db.query(auth.UserModel).filter_by(username="budiview").first()
-        u.role = "viewer"
     tok = auth.authenticate("budiview", "Startpass1", ip="127.0.0.1")
-    assert tok, "seed login viewer gagal"
+    assert tok, "seed login user gagal"
     return {"Authorization": f"Bearer {tok}"}
 
 
-VIEWER = _make_viewer()
+USER = _make_user()
 
 
 def test_a_initial_null():
@@ -89,14 +86,14 @@ def test_d_invalid_provider_400():
 
 
 def test_e_viewer_forbidden_but_can_read():
-    r = client.post("/api/core/activate-provider", headers=VIEWER, json={"provider": "magma"})
-    assert r.status_code == 403, f"expected 403, got {r.status_code}: {r.text}"
-    d = r.json()["detail"]
-    assert d["reason"] == "viewer_permission_denied", d
-    # Viewer masih boleh LIHAT status (require_user, bukan require_engineer)
-    g = client.get("/api/core/active-provider", headers=VIEWER)
-    assert g.status_code == 200 and g.json()["provider"] == "open5gs", g.text
-    print("PASS (e): viewer activate -> 403 viewer_permission_denied; GET status tetap 200")
+    """RBAC 2-role: role 'user' adalah operator penuh — activate diizinkan."""
+    r = client.post("/api/core/activate-provider", headers=USER, json={"provider": "magma"})
+    assert r.status_code == 200, f"expected 200, got {r.status_code}: {r.text}"
+    assert r.json()["username"] == "budiview", r.json()
+    # User tetap boleh LIHAT status; aktivasi magma sukses menggantikan open5gs
+    g = client.get("/api/core/active-provider", headers=USER)
+    assert g.status_code == 200 and g.json()["provider"] == "magma", g.text
+    print("PASS (e): user biasa activate -> 200 (setara engineer lama); GET status 200")
 
 
 def test_f_deactivate_and_double():
@@ -117,9 +114,9 @@ def test_g_audit_logged():
             .filter(main.AuditLogModel.action.in_(["PROVIDER_ACTIVATE", "PROVIDER_DEACTIVATE"]))
             .all()
         ]
-    # 2 activate sukses (oai, open5gs); percobaan viewer 403 ditolak sebelum
-    # handler sehingga TIDAK masuk audit. Deactivate sukses 1x.
-    assert acts.count("PROVIDER_ACTIVATE") == 2, acts
+    # 3 activate sukses (oai, open5gs oleh admin; magma oleh user biasa).
+    # Deactivate sukses 1x.
+    assert acts.count("PROVIDER_ACTIVATE") == 3, acts
     assert acts.count("PROVIDER_DEACTIVATE") == 1, acts
     print(f"PASS (g): audit log OK ({acts})")
 

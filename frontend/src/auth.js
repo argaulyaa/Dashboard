@@ -30,11 +30,11 @@ export async function login(username, password) {
   const data = await res.json();
   setToken(data.token);
   setUser(data.user || username);
-  setRole(data.role || "engineer");
+  setRole(data.role || "user");
   return data;
 }
 
-// NOTE: no role parameter — self-register is always 'viewer' (backend-enforced).
+// NOTE: no role parameter — self-register is always 'user' (backend-enforced).
 export async function register(fullName, username, email, password) {
   const res = await fetch("/api/auth/register", {
     method: "POST",

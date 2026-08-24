@@ -1,5 +1,58 @@
 # Changelog
 
+## 2026-08-24 - RBAC disederhanakan: 2 role (admin + user), audit log admin-only
+
+### Keputusan Owner
+Model 3-role (admin/engineer/viewer) diganti **2 role: `admin` + `user`**.
+Role `user` = setara engineer lama (operasi penuh: reservasi, Console SSH,
+Activate/Deactivate provider, restart). Role `admin` = user + kelola role akun
+lain + **satu-satunya yang boleh membaca audit log** (lubang keamanan ditutup).
+Self-register default `user` (sebelumnya `viewer`).
+
+### Perubahan Backend
+- `backend/auth.py`:
+  - Seed admin (`_DEFAULT_USERS` / `init_auth_data`) kini dibuat dengan role
+    **`admin`** (dulu `engineer`).
+  - Fungsi baru `_normalize_role()`: nilai legacy apa pun (`engineer`,
+    `viewer`, unknown/null) dibaca sebagai `user`; hanya `admin` istimewa
+    (lazy migration, tanpa skrip DB).
+  - `require_engineer` diganti `require_operator` (menerima `user`+`admin`)
+    dan dependensi baru `require_admin` (admin-only, dipakai audit log).
+  - Self-register (`create_pending_registration`, `register_user`) hardcode
+    role `user`.
+- `backend/main.py`: activate/deactivate provider pakai `require_operator`;
+  `PUT /api/auth/users/{username}/role` validasi target hanya `user|admin`
+  (nilai legacy -> 400); `GET /api/audit-logs` kini `Depends(require_admin)`
+  (403 untuk non-admin); reservasi/restart cek `user|admin`.
+- `backend/models.py`: default kolom role `user`.
+
+### Perubahan Frontend
+- `frontend/src/user.js` / `auth.js`: fallback role `user`.
+- Semua halaman: kondisi `viewer`/`engineer` dihapus — `user` & `admin`
+  sama-sama operator penuh; Console SSH, reservasi, Activate, restart tidak
+  lagi ada gate read-only.
+- `Profile.jsx`: tombol promote/demote jadi toggle **Jadikan Admin /
+  Jadikan User**.
+- AuditLogs.jsx + route `/audit-logs`: tetap admin-only (pola lama konsisten).
+
+### Migrasi Data
+DB SQLite in-pod `/data/oran_dashboard.db` efemeral. Normalisasi role bersifat
+lazy: hanya string `admin` yang dipetakan ke admin; `engineer`, `viewer`, dan
+nilai tak dikenal dibaca sebagai `user`. Akun admin baru hasil seed saat pod
+start otomatis ber-role `admin`; user lama engineer/viewer otomatis setara
+`user` tanpa skrip migrasi DB.
+
+### Verifikasi
+- `py_compile` semua file Python yang berubah PASS.
+- Test baru `backend/test_rbac_two_roles.py` **8/8 PASS**: register->user,
+  admin baca audit 200, user baca audit 403, user create reservation OK,
+  user activate provider OK, user PUT role orang lain 403, admin toggle
+  user<->admin OK (+legacy 'engineer' 400), lazy migration legacy roles.
+- Regresi: test_forgot_password 5/5, test_otp_failclosed 4/4,
+  test_provider_activation 7/7 (disesuaikan kontrak baru),
+  test_ran_activation 7/7.
+- `npm run build` sukses (`index-D0s7Q87v.js`, 66 modules).
+
 ## 2026-08-24 - RIC page: kartu Active xApps dihapus, kotak FlexRIC full-width
 
 ### Perubahan

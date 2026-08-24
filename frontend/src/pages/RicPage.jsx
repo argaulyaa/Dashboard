@@ -209,7 +209,8 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
               <span className="material-symbols-outlined text-lg">subject</span>
               View Logs
             </button>
-            {getRole() !== "viewer" && (
+            {/* RBAC 2-role: user & admin sama-sama boleh operasi */}
+            {(getRole() === "user" || getRole() === "admin") && (
               hero?.host ? (
                 <button
                   className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-container transition-colors font-bold text-sm shadow-md active:scale-95 transition-all"

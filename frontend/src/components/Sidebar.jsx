@@ -21,7 +21,7 @@ export default function Sidebar({ currentUser, onUserChange, onLogout }) {
   const initials = (currentUser || "?").trim().slice(0, 2).toUpperCase();
 
   const visibleNavItems = NAV_ITEMS.filter((item) => {
-    if (item.to === "/reservations" && role === "viewer") return false;
+    if (item.to === "/reservations" && !(role === "user" || role === "admin")) return false;
     if (item.to === "/audit-logs" && !isAdmin) return false;
     return true;
   });
@@ -92,9 +92,9 @@ export default function Sidebar({ currentUser, onUserChange, onLogout }) {
               <div className="text-left min-w-0">
                 <p className="font-title-md text-title-md text-on-surface truncate">{currentUser}</p>
                 <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                  role === "viewer" ? "bg-amber-100 text-amber-800" : "bg-primary/10 text-primary"
+                  role === "admin" ? "bg-primary/10 text-primary" : "bg-primary/10 text-primary"
                 }`}>
-                  {role}
+                  {role === "user" || role === "admin" ? role : "user"}
                 </span>
               </div>
             </button>

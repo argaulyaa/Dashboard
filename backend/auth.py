@@ -77,7 +77,7 @@ def init_auth_data():
                 full_name="System Administrator",
                 salt=salt_hex,
                 hash=hash_hex,
-                role="engineer",
+                role="admin",
                 created_at=time.time(),
             )
             db.add(admin)
@@ -95,7 +95,9 @@ def init_auth_data():
                                 full_name=entry.get("full_name", ""),
                                 salt=entry.get("salt"),
                                 hash=entry.get("hash"),
-                                role=entry.get("role", "engineer"),
+                                # RBAC 2-role: role legacy apa pun ('engineer',
+                                # 'viewer', tak dikenal) dipetakan ke 'user'.
+                                role=_normalize_role(entry.get("role")),
                                 created_at=time.time(),
                             )
                         )
@@ -104,12 +106,24 @@ def init_auth_data():
 
 
 def get_user_role(username: str) -> str:
-    """Returns 'engineer' or 'viewer'."""
+    """Returns 'user' or 'admin' (RBAC 2-role).
+
+    Lazy migration: nilai legacy ('engineer', 'viewer', null, atau string
+    tak dikenal) dibaca sebagai 'user'. Hanya 'admin' yang diperlakukan
+    istimewa."""
     with get_db_session() as db:
         user = db.query(UserModel).filter(UserModel.username == username).first()
         if user and user.role:
-            return user.role
-    return "engineer"
+            return _normalize_role(user.role)
+    return "user"
+
+
+def _normalize_role(role: str | None) -> str:
+    """Map role apa pun ke salah satu dari {'user', 'admin'}.
+
+    Konversi 3-role -> 2-role: engineer -> user; viewer -> user;
+    unknown/None -> user. Hanya 'admin' yang tetap admin."""
+    return "admin" if (role or "").strip().lower() == "admin" else "user"
 
 
 def _validate_email(email: str) -> bool:
@@ -123,7 +137,7 @@ OTP_TTL_SECONDS = 10 * 60  # 10 menit
 
 
 def create_pending_registration(
-    username: str, password: str, email: str, full_name: str = "", role: str = "viewer"
+    username: str, password: str, email: str, full_name: str = "", role: str = "user"
 ) -> str:
     """
     Buat pending registration (belum aktif sampai OTP diverifikasi).
@@ -134,7 +148,7 @@ def create_pending_registration(
     dicetak ke log). Pending registration tetap tersimpan sehingga user bisa
     retry via resend-otp setelah SMTP diperbaiki.
 
-    Security: self-register SELALU menghasilkan role 'viewer' — parameter
+    Security: self-register SELALU menghasilkan role 'user' — parameter
     `role` sengaja DIABAIKAN agar client tidak bisa memilih role sendiri.
     Role hanya bisa diubah oleh admin via PUT /api/auth/users/{username}/role.
     """
@@ -152,8 +166,8 @@ def create_pending_registration(
     if policy_error:
         raise ValueError(policy_error)
 
-    # Security: role dari client diabaikan — self-register selalu 'viewer'.
-    role = "viewer"
+    # Security: role dari client diabaikan — self-register selalu 'user'.
+    role = "user"
 
     salt_hex, hash_hex = _hash_password(password)
     otp_code = f"{random.randint(0, 999999):06d}"
@@ -260,11 +274,11 @@ def resend_registration_otp(username: str) -> bool:
     return True
 
 
-def register_user(username: str, password: str, full_name: str = "", role: str = "viewer", email: str = "") -> dict:
+def register_user(username: str, password: str, full_name: str = "", role: str = "user", email: str = "") -> dict:
     """Creates a new user account in database (tanpa email verification — dipakai oleh admin).
 
-    Security: parameter `role` DIABAIKAN (hardcoded 'viewer') — akun yang
-    dibuat lewat jalur ini tidak pernah bisa dapat role 'engineer' dari
+    Security: parameter `role` DIABAIKAN (hardcoded 'user') — akun yang
+    dibuat lewat jalur ini tidak pernah bisa dapat role 'admin' dari
     client. Role hanya bisa diubah oleh admin via
     PUT /api/auth/users/{username}/role."""
     username = username.strip()
@@ -274,8 +288,8 @@ def register_user(username: str, password: str, full_name: str = "", role: str =
     if policy_error:
         raise ValueError(policy_error)
 
-    # Security: role dari client diabaikan — akun baru selalu 'viewer'.
-    role = "viewer"
+    # Security: role dari client diabaikan — akun baru selalu 'user'.
+    role = "user"
 
     salt_hex, hash_hex = _hash_password(password)
 
@@ -306,13 +320,13 @@ def get_profile(username: str) -> dict:
             return {
                 "username": user.username,
                 "full_name": user.full_name or "",
-                "role": user.role or "engineer",
+                "role": _normalize_role(user.role),
                 "editable": True,
             }
     return {
         "username": username,
         "full_name": "",
-        "role": "engineer",
+        "role": "user",
         "editable": False,
     }
 
@@ -500,7 +514,7 @@ def list_registered_users() -> list[dict]:
             {
                 "username": u.username,
                 "full_name": u.full_name or "",
-                "role": u.role or "engineer",
+                "role": _normalize_role(u.role),
             }
             for u in users
             if u.username != "admin"
@@ -580,17 +594,36 @@ def require_user(authorization: str = Header(default="")) -> str:
     return session["user"]
 
 
-def require_engineer(authorization: str = Header(default="")) -> str:
-    """FastAPI dependency: validates token AND checks engineer role."""
+def require_operator(authorization: str = Header(default="")) -> str:
+    """FastAPI dependency: validates token AND checks operator role.
+
+    RBAC 2-role: role 'user' dan 'admin' sama-sama boleh operasi penuh
+    (reservasi, Console SSH, Activate/Deactivate provider, restart)."""
     username = require_user(authorization)
-    role = get_user_role(username)
-    if role not in ["engineer", "admin"]:
+    if get_user_role(username) not in ("user", "admin"):
         raise HTTPException(
             403,
             detail={
                 "ok": False,
-                "reason": "viewer_permission_denied",
-                "message": "Viewer role is not allowed to perform action.",
+                "reason": "permission_denied",
+                "message": "This action requires an operator role (user/admin).",
+            },
+        )
+    return username
+
+
+def require_admin(authorization: str = Header(default="")) -> str:
+    """FastAPI dependency: token valid DAN role harus 'admin'.
+
+    Satu-satunya gate untuk audit log & pengelolaan role akun lain."""
+    username = require_user(authorization)
+    if get_user_role(username) != "admin":
+        raise HTTPException(
+            403,
+            detail={
+                "ok": False,
+                "reason": "admin_permission_denied",
+                "message": "Only admin can perform this action.",
             },
         )
     return username

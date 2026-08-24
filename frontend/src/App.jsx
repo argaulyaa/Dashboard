@@ -206,7 +206,8 @@ const handleLogout = useCallback(() => {
 <Route
   path="/reservations"
   element={
-    getRole() === "viewer" ? (
+    /* RBAC 2-role: semua role ('user'/'admin') boleh reservasi */
+    false ? (
       <Navigate to="/" replace />
     ) : (
       <ReservationsPage

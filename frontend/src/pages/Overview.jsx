@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import NetworkTopologyMap from "../components/NetworkTopologyMap.jsx";
-import { getRole } from "../user.js";
+
 
 const DOMAIN_META = {
   core: { title: "Core", subtitle: "5G Core network functions", icon: "memory" },
@@ -250,7 +250,7 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
                     </p>
                     <div className="flex justify-between items-center text-label-sm">
                       <span>Expires in {formatRemaining(activeRes.remaining_seconds)}</span>
-                      {activeRes.user === currentUser && getRole() !== "viewer" && (
+                      {activeRes.user === currentUser && (
                         <Link
                           className="font-semibold text-primary hover:underline text-xs"
                           to={`/ssh/${c.domain}/${c.id}`}
@@ -262,7 +262,8 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
                   </div>
                 );
               })}
-              {getRole() !== "viewer" && (
+              {/* RBAC 2-role: semua role boleh kelola reservasi */}
+              {true && (
                 <Link
                   to="/reservations"
                   className="block text-center w-full py-3 bg-primary-container text-white rounded-xl font-label-lg hover:brightness-110 transition-all mt-3"

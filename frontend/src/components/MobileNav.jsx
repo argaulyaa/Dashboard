@@ -15,7 +15,7 @@ export default function MobileNav({ currentUser }) {
   const role = getRole();
   const isAdmin = currentUser === "admin" || role === "admin";
   const visibleItems = ITEMS.filter((item) => {
-    if (item.to === "/reservations" && role === "viewer") return false;
+    if (item.to === "/reservations" && !(role === "user" || role === "admin")) return false;
     if (item.to === "/audit-logs" && !isAdmin) return false;
     return true;
   });

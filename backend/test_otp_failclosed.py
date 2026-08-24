@@ -168,12 +168,13 @@ def test_d_verify_flow_untouched():
     r = client.post("/api/auth/verify-email", json={"username": "budi", "otp_code": otp})
     assert r.status_code == 200, f"expected 200, got {r.status_code}: {r.text}"
     body = r.json()
-    assert body["ok"] is True and body["user"] == "budi" and body["role"] == "viewer"
+    # RBAC 2-role: self-register sekarang default 'user' (dulu 'viewer')
+    assert body["ok"] is True and body["user"] == "budi" and body["role"] == "user"
     assert body.get("token"), "login token harus dikembalikan"
     with auth.get_db_session() as db:
         u = db.query(auth.UserModel).filter_by(username="budi").one()
-        assert u.role == "viewer"
-    print("PASS (d): verify-email alur lama utuh -> akun aktif + token viewer")
+        assert auth._normalize_role(u.role) == "user"
+    print("PASS (d): verify-email alur lama utuh -> akun aktif + token role user")
 
 
 if __name__ == "__main__":

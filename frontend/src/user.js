@@ -15,9 +15,10 @@ export function clearUser() {
 }
 
 export function getRole() {
-  return window.localStorage.getItem(KEY_ROLE) || "engineer";
+  // RBAC 2-role: 'user' | 'admin' (legacy 'engineer'/'viewer' -> 'user')
+  return window.localStorage.getItem(KEY_ROLE) || "user";
 }
 
 export function setRole(role) {
-  window.localStorage.setItem(KEY_ROLE, role || "engineer");
+  window.localStorage.setItem(KEY_ROLE, role || "user");
 }

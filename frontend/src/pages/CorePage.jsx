@@ -139,7 +139,8 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
   const activeCount = displayedComponents.filter((c) => c.status !== "down").length;
 
   // ---- Provider activation state ----
-  const isViewer = getRole() === "viewer";
+  // RBAC 2-role: user & admin sama-sama operator penuh.
+  const isViewer = false;
   // Provider yang sedang aktif secara eksplisit (atau null).
   const activatedKey = activeActivation?.provider || null;
   const activatedLabel = providers.find((p) => p.key === activatedKey)?.label || activatedKey;
@@ -301,7 +302,8 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
 
           <div className="mt-8 flex justify-end gap-3">
             {/* 1) Console — dipindah ke kiri */}
-            {getRole() !== "viewer" && (
+            {/* RBAC 2-role: user & admin sama-sama operator */}
+            {(getRole() === "user" || getRole() === "admin") && (
               heroView.sshActive ? (
                 <button
                   className="px-6 py-2.5 bg-primary text-white font-bold rounded-lg shadow-md hover:brightness-110 active:scale-95 transition-all flex items-center gap-2"
@@ -436,8 +438,8 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
                     <button
                       className="text-primary hover:underline font-bold text-xs disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed"
                       onClick={() => handleRestartRow(c.id)}
-                      disabled={restartingId === c.id || c.status === "restarting" || getRole() === "viewer"}
-                      title={getRole() === "viewer" ? "Viewers cannot restart components" : ""}
+                      disabled={restartingId === c.id || c.status === "restarting"}
+                      title=""
                     >
                       {restartingId === c.id || c.status === "restarting" ? "Restarting..." : "Restart"}
                     </button>
