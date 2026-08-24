@@ -80,9 +80,16 @@ jobs:
           # imagePullPolicy=Always, so every push deploys exactly the new build —
           # no stale-image mismatch. Values/SSH creds/secret live in the chart so a
           # plain upgrade renders the known-good state without --reuse-values.
+          # Runner-local SMTP values (email OTP credentials) are merged in if the
+          # file exists on the runner; it is NOT in git and must never be committed.
+          SMTP_ARGS=''
+          if [ -f /home/github-runner/oran-smtp-values.yaml ]; then
+            SMTP_ARGS='-f /home/github-runner/oran-smtp-values.yaml'
+          fi
           helm upgrade --install ${{ env.HELM_RELEASE }} ./deploy/helm/oran-dashboard \
             --namespace ${{ env.NAMESPACE }} \
             --create-namespace \
+            $SMTP_ARGS \
             --set backend.image.tag=${{ github.sha }} \
             --set frontend.image.tag=${{ github.sha }} \
             --timeout 180s \
