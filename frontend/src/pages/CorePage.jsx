@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from "react";
-import { fetchProviders, fetchComponents } from "../api.js";
+import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
 
@@ -51,6 +51,12 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
   const [restartingId, setRestartingId] = useState(null);
   const [logTarget, setLogTarget] = useState(null);
 
+  // Provider core yang di-set AKTIF lewat backend (tabel active_providers).
+  // Eksklusif: cuma ada satu row global, jadi nilainya satu provider atau null.
+  // Shape: {provider, username, activated_at} | null
+  const [activeActivation, setActiveActivation] = useState(null);
+  const [activationBusy, setActivationBusy] = useState(false);
+
   // Health semua non-default provider — di-fetch sekali saat providers pertama kali load.
   // Default provider sudah punya data live dari WebSocket (`components` prop).
   const [providerHealthMap, setProviderHealthMap] = useState({});
@@ -72,6 +78,10 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
         });
       })
       .catch(() => setProviders([]));
+
+    // Status aktivasi provider (siapa yang sedang AKTIF secara eksplisit).
+    // Gagal diam-diam: fitur ini opsional bagi sisa halaman.
+    getActiveProvider("core").then(setActiveActivation).catch(() => {});
   }, []);
 
   // Provider pertama (default) pakai data live dari WebSocket telemetry
@@ -128,6 +138,36 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
 
   const activeCount = displayedComponents.filter((c) => c.status !== "down").length;
 
+  // ---- Provider activation state ----
+  const isViewer = getRole() === "viewer";
+  // Provider yang sedang aktif secara eksplisit (atau null).
+  const activatedKey = activeActivation?.provider || null;
+  const activatedLabel = providers.find((p) => p.key === activatedKey)?.label || activatedKey;
+  const isActiveTab = activatedKey != null && activatedKey === activeProvider;
+  const isBusy = activationBusy;
+
+  const handleToggleActivation = async () => {
+    if (isViewer || !activeProvider) return;
+    setActivationBusy(true);
+    try {
+      if (isActiveTab) {
+        await deactivateProvider("core");
+        setActiveActivation(null);
+      } else {
+        const res = await activateProvider("core", activeProvider);
+        setActiveActivation({
+          provider: res.provider,
+          username: res.username,
+          activated_at: res.activated_at,
+        });
+      }
+    } catch (e) {
+      console.error("Provider activation failed", e);
+    } finally {
+      setActivationBusy(false);
+    }
+  };
+
 
   const handleRestartRow = async (id) => {
     setRestartingId(id);
@@ -176,20 +216,31 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
       <div className="flex flex-wrap gap-4 mb-8">
         {providers.map((p) => {
           const active = p.key === activeProvider;
+          // Tab yang provider-nya di-set AKTIF dapat badge + border khusus
+          const isActiveProvider = p.key === activatedKey;
           return (
             <button
               key={p.key}
               onClick={() => setActiveProvider(p.key)}
-              className={`flex items-center gap-3 px-6 py-4 rounded-xl border-2 transition-all duration-200 glass-card ${
-                active
-                  ? "border-primary text-primary shadow-md"
-                  : "border-transparent text-on-surface-variant hover:bg-surface-container"
+              className={`relative flex items-center gap-3 px-6 py-4 rounded-xl border-2 transition-all duration-200 glass-card ${
+                isActiveProvider
+                  ? "border-secondary shadow-md"
+                  : active
+                    ? "border-primary text-primary shadow-md"
+                    : "border-transparent text-on-surface-variant hover:bg-surface-container"
               }`}
             >
               <span className="material-symbols-outlined">{p.icon}</span>
               <div className="text-left">
                 <p className="text-xs uppercase tracking-widest font-bold opacity-70">Provider</p>
-                <p className="font-bold">{p.label}</p>
+                <p className="font-bold flex items-center gap-2">
+                  {p.label}
+                  {isActiveProvider && (
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-secondary-container text-on-secondary-container animate-pulse">
+                      ● ACTIVE
+                    </span>
+                  )}
+                </p>
               </div>
             </button>
           );
@@ -249,13 +300,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
           </div>
 
           <div className="mt-8 flex justify-end gap-3">
-            <button
-              className="px-6 py-2.5 border border-outline-variant text-on-surface font-bold rounded-lg hover:bg-surface-container-low transition-colors flex items-center gap-2"
-              onClick={() => hero && setLogTarget({ domain: "core", compId: hero.id, compName: hero.name })}
-            >
-              <span className="material-symbols-outlined text-lg">subject</span>
-              View Logs
-            </button>
+            {/* 1) Console — dipindah ke kiri */}
             {getRole() !== "viewer" && (
               heroView.sshActive ? (
                 <button
@@ -275,6 +320,44 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
                 </button>
               )
             )}
+
+            {/* 2) View Logs */}
+            <button
+              className="px-6 py-2.5 border border-outline-variant text-on-surface font-bold rounded-lg hover:bg-surface-container-low transition-colors flex items-center gap-2"
+              onClick={() => hero && setLogTarget({ domain: "core", compId: hero.id, compName: hero.name })}
+            >
+              <span className="material-symbols-outlined text-lg">subject</span>
+              View Logs
+            </button>
+
+            {/* 3) Activate / Deactivate provider tab yang sedang dibuka.
+                Eksklusif: kalau provider LAIN sedang aktif, tombol disabled.
+                Viewer: lihat status tapi tombol disabled. */}
+            <button
+              onClick={handleToggleActivation}
+              disabled={isBusy || isViewer || (activatedKey != null && !isActiveTab)}
+              title={
+                isViewer
+                  ? "Viewers cannot activate providers"
+                  : activatedKey != null && !isActiveTab
+                    ? `Provider ${activatedLabel} sedang aktif — nonaktifkan dulu`
+                    : ""
+              }
+              className={
+                isActiveTab
+                  ? `px-6 py-2.5 bg-error text-on-error font-bold rounded-lg shadow-md transition-all flex items-center gap-2 ${isViewer || isBusy ? "opacity-50 cursor-not-allowed" : "hover:brightness-110 active:scale-95"}`
+                  : `px-6 py-2.5 border border-outline-variant font-bold rounded-lg transition-all flex items-center gap-2 ${
+                      isViewer || isBusy || activatedKey != null
+                        ? "text-on-surface-variant opacity-50 cursor-not-allowed"
+                        : "text-secondary hover:bg-surface-container-low hover:border-secondary active:scale-95"
+                    }`
+              }
+            >
+              <span className="material-symbols-outlined text-lg">
+                {isActiveTab ? "power_settings_new" : activatedKey != null && !isActiveTab ? "block" : "power_settings_new"}
+              </span>
+              {isBusy ? "..." : isActiveTab ? "Deactivate" : "Activate"}
+            </button>
           </div>
         </div>
 

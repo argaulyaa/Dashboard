@@ -62,6 +62,29 @@ class PendingPasswordResetModel(Base):
     created_at = Column(Float, default=time.time, nullable=False)
 
 
+class ActiveProviderModel(Base):
+    """Provider yang sedang AKTIF untuk satu domain (mis. 'core').
+
+    Satu row per domain (primary key = domain), jadi eksklusif: mengaktifkan
+    provider lain cukup meng-upsert row ini. Row dihapus saat deactivate,
+    sehingga tidak ada provider aktif.
+    """
+    __tablename__ = "active_providers"
+
+    domain = Column(String(32), primary_key=True, index=True)
+    provider = Column(String(64), nullable=False)
+    username = Column(String(64), nullable=False)
+    activated_at = Column(Float, default=time.time, nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "domain": self.domain,
+            "provider": self.provider,
+            "username": self.username,
+            "activated_at": self.activated_at,
+        }
+
+
 class ReservationModel(Base):
     __tablename__ = "reservations"
 

@@ -31,6 +31,47 @@ export async function restartComponent(domain, id) {
   return res.json();
 }
 
+// ---- Provider activation (satu provider aktif eksklusif per domain) ----
+
+// Provider yang sedang aktif untuk domain ini: {provider, username,
+// activated_at} atau {provider: null} kalau belum ada yang diaktifkan.
+export async function getActiveProvider(domain) {
+  const res = await fetch(`${BASE}/${domain}/active-provider`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to load active provider for ${domain}`);
+  return res.json();
+}
+
+export async function activateProvider(domain, provider) {
+  const res = await fetch(`${BASE}/${domain}/activate-provider`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ provider }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(typeof data.detail === "string" ? data.detail : "activate_failed");
+    err.payload = data?.detail;
+    throw err;
+  }
+  return data;
+}
+
+export async function deactivateProvider(domain) {
+  const res = await fetch(`${BASE}/${domain}/deactivate-provider`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(typeof data.detail === "string" ? data.detail : "deactivate_failed");
+    err.payload = data?.detail;
+    throw err;
+  }
+  return data;
+}
+
 export async function fetchReservation(domain, id) {
   const res = await fetch(`${BASE}/${domain}/components/${id}/reservation`);
   if (!res.ok) throw new Error(`Failed to load reservation for ${id}`);

@@ -15,7 +15,7 @@ from ssh_proxy import run_ssh_bridge
 from adapters import DOMAIN_PROVIDERS
 import reservations
 from database import get_db_session
-from models import AuditLogModel, UserModel
+from models import AuditLogModel, UserModel, ActiveProviderModel
 from auth import (
     authenticate, register_user, delete_user, list_registered_users,
     require_user, get_session_info, get_profile, update_full_name, change_password,
@@ -125,6 +125,11 @@ class ConfirmPasswordResetRequest(BaseModel):
     confirm_password: str
 
 
+class ActivateProviderRequest(BaseModel):
+    """Payload aktivasi provider untuk satu domain (mis. domain='core')."""
+    provider: str
+
+
 def _get_adapter(domain: str, provider: str = None):
     providers = DOMAINS.get(domain)
     if not providers:
@@ -156,6 +161,82 @@ def list_providers(domain: str):
         {"key": key, "label": e["label"], "icon": e["icon"], "desc": e["desc"]}
         for key, e in providers.items()
     ]
+
+
+# ---- Provider activation (satu provider aktif eksklusif per domain) ----
+
+@app.get("/api/{domain}/active-provider")
+def get_active_provider(domain: str, current_user: str = Depends(require_user)):
+    """Provider yang sedang aktif untuk domain ini (atau null jika tidak ada)."""
+    if domain not in DOMAINS:
+        raise HTTPException(404, f"Unknown domain '{domain}'")
+    with get_db_session() as db:
+        row = db.query(ActiveProviderModel).filter(ActiveProviderModel.domain == domain).first()
+        # Baca atribut DI DALAM sesi — akses setelah close -> DetachedInstanceError
+        data = row.to_dict() if row else None
+    if not data:
+        return {"provider": None, "username": None, "activated_at": None}
+    return {
+        "provider": data["provider"],
+        "username": data["username"],
+        "activated_at": data["activated_at"],
+    }
+
+
+@app.post("/api/{domain}/activate-provider")
+def activate_provider(
+    domain: str, body: ActivateProviderRequest, current_user: str = Depends(require_engineer)
+):
+    """Aktifkan satu provider core. Engineer/admin only.
+
+    Eksklusif by design: tabel active_providers primary key-nya 'domain',
+    jadi aktivasi provider baru otomatis MENGGANTI provider aktif sebelumnya.
+    UI yang menegakkan eksklusifitas (disable tombol Activate provider lain);
+    di backend upsert sengaja simple sesuai spesifikasi owner."""
+    providers = DOMAINS.get(domain)
+    if not providers:
+        raise HTTPException(404, f"Unknown domain '{domain}'")
+    if body.provider not in providers:
+        raise HTTPException(400, f"Unknown provider '{body.provider}' for domain '{domain}'")
+    with get_db_session() as db:
+        row = db.query(ActiveProviderModel).filter(ActiveProviderModel.domain == domain).first()
+        if row:
+            row.provider = body.provider
+            row.username = current_user
+            row.activated_at = time.time()
+        else:
+            row = ActiveProviderModel(
+                domain=domain,
+                provider=body.provider,
+                username=current_user,
+                activated_at=time.time(),
+            )
+            db.add(row)
+    log_audit(current_user, "PROVIDER_ACTIVATE", domain=domain, detail=body.provider)
+    return {
+        "ok": True,
+        "domain": domain,
+        "provider": body.provider,
+        "username": current_user,
+        "activated_at": time.time(),
+    }
+
+
+@app.post("/api/{domain}/deactivate-provider")
+def deactivate_provider(domain: str, current_user: str = Depends(require_engineer)):
+    """Nonaktifkan provider yang sedang aktif untuk domain ini. Engineer/admin only."""
+    if domain not in DOMAINS:
+        raise HTTPException(404, f"Unknown domain '{domain}'")
+    with get_db_session() as db:
+        deleted = (
+            db.query(ActiveProviderModel)
+            .filter(ActiveProviderModel.domain == domain)
+            .delete()
+        )
+    if not deleted:
+        raise HTTPException(404, "no_active_provider")
+    log_audit(current_user, "PROVIDER_DEACTIVATE", domain=domain)
+    return {"ok": True, "domain": domain}
 
 
 @app.post("/api/auth/login")
