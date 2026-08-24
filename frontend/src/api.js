@@ -135,3 +135,13 @@ export function openTelemetrySocket(onSnapshot) {
   };
   return ws;
 }
+
+export async function requestPasswordReset(username) {
+  const res = await fetch(`${BASE}/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username }),
+  });
+  if (!res.ok) throw new Error("Request failed");
+  return res.json();
+}

@@ -87,6 +87,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    username: str
+
+
 def _get_adapter(domain: str, provider: str = None):
     providers = DOMAINS.get(domain)
     if not providers:
@@ -198,6 +202,17 @@ def change_password_endpoint(body: ChangePasswordRequest, current_user: str = De
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"changed": True}
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(body: ForgotPasswordRequest, request: Request):
+    """Records a password reset request to the audit log.
+    Always returns success to avoid leaking whether a username exists.
+    Admin can view the request via GET /api/audit-logs.
+    """
+    client_ip = request.client.host if request.client else ""
+    log_audit(body.username.strip(), "FORGOT_PASSWORD_REQUEST", ip=client_ip)
+    return {"ok": True, "message": "If the account exists, an administrator has been notified."}
 
 
 @app.get("/api/{domain}/components")
