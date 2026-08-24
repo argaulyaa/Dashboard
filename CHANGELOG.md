@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-24 - RAN page: tombol Console kiri, Activate kanan, eksklusif antar provider RAN
+
+### Perubahan
+- `frontend/src/pages/RanPage.jsx` (satu-satunya file yang diubah; backend sudah
+  generik sejak a9cc8c0 — endpoint `/api/{domain}/activate-provider` dll. otomatis
+  melayani domain `ran` dengan provider oai + srsran):
+  - Reorder tombol action bar hero card: **Console** (kiri) → **View Logs** →
+    **Activate/Deactivate** (kanan), konsisten dengan CorePage.
+  - Tombol Activate toggle ke `/api/ran/activate-provider` / `deactivate-provider`
+    (engineer/admin only; viewer lihat status tapi disabled).
+  - Eksklusif antar provider RAN: kalau satu provider aktif, tombol Activate di
+    tab provider lain disabled + tooltip "Provider X sedang aktif — nonaktifkan
+    dulu". Tab yang aktif dapat badge `● ACTIVE` + border secondary.
+  - Saat activate: tab lain otomatis keganti (backend upsert single-row per
+    domain), state UI langsung disinkronkan tanpa reload.
+
+### Verifikasi
+- `npm run build` (vite) PASS.
+- Regresi `test_provider_activation.py` 7/7 PASS (domain core).
+- Test baru `test_ran_activation.py` 7/7 PASS: eksklusivitas oai↔srsran,
+  single-row per domain, independensi core vs ran, deactivate, idempotensi.
+
 ## 2026-08-23 - Fix permanen CI deploy (release mismatch + pullsecret)
 
 ### Masalah
