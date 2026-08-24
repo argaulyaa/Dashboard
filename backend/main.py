@@ -167,6 +167,17 @@ def register(body: RegisterRequest, request: Request):
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        if str(e) == 'email_service_unavailable':
+            raise HTTPException(
+                503,
+                detail={
+                    'ok': False,
+                    'reason': 'email_service_unavailable',
+                    'message': 'Gagal mengirim email verifikasi. Coba lagi nanti.',
+                },
+            )
+        raise
     log_audit(body.username, "REGISTER_PENDING", detail=f"Email: {body.email}; Role: viewer", ip=client_ip)
     return {"ok": True, "username": body.username, "message": "OTP sent to email. Please verify."}
 
@@ -205,7 +216,19 @@ def verify_email(body: VerifyOtpRequest, request: Request):
 @app.post("/api/auth/resend-otp")
 def resend_otp(body: ResendOtpRequest, request: Request):
     """Kirim ulang OTP verifikasi."""
-    ok = resend_registration_otp(body.username)
+    try:
+        ok = resend_registration_otp(body.username)
+    except RuntimeError as e:
+        if str(e) == 'email_service_unavailable':
+            raise HTTPException(
+                503,
+                detail={
+                    'ok': False,
+                    'reason': 'email_service_unavailable',
+                    'message': 'Gagal mengirim email verifikasi. Coba lagi nanti.',
+                },
+            )
+        raise
     if not ok:
         raise HTTPException(404, "pending_not_found")
     return {"ok": True, "message": "OTP resent."}

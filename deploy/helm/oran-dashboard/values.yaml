@@ -49,6 +49,25 @@ auth:
   # Format "user:pass,user2:pass2" (default admin:admin)
   oranUsers: "admin:admin"
 
+smtp:
+  # ---- Email verifikasi (OTP) via SMTP ----
+  # PENTING — KEAMANAN: biarkan nilai-nilai di bawah KOSONG ("") di repo/git.
+  # Kredensial ASLI (host/user/password/from) diisi SAAT DEPLOY langsung di
+  # cluster, misal:
+  #   helm upgrade ... --set smtp.host=smtp.gmail.com \
+  #                    --set smtp.user=xxx@gmail.com \
+  #                    --set smtp.password=<app-password> \
+  #                    --set smtp.from=xxx@gmail.com
+  # (atau `kubectl edit secret <fullname>-backend -n dashboard`).
+  # Jangan pernah commit kredensial email ke git.
+  # Catatan perilaku backend: jika SMTP_HOST kosong, pengiriman OTP FAIL-CLOSED
+  # (register/resend gagal dengan 503) — OTP TIDAK PERNAH dicetak ke log.
+  host: ''
+  port: '587'
+  user: ''
+  password: ''
+  from: ''
+
 database:
   # See backend/database.py — sqlite path is under /data (mounted volume)
   url: "sqlite:////data/oran_dashboard.db"

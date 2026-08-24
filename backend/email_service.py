@@ -20,10 +20,14 @@ def _smtp_config() -> dict | None:
 
 
 def send_verification_email(to_email: str, otp_code: str, username: str = '') -> bool:
+    """Kirim OTP via SMTP. FAIL-CLOSED: kalau SMTP tidak dikonfigurasi atau
+    pengiriman gagal, raise RuntimeError('email_service_unavailable') — OTP
+    TIDAK PERNAH dicetak/di-log dalam bentuk apa pun. Return True hanya jika
+    email benar-benar terkirim."""
     cfg = _smtp_config()
     if cfg is None:
-        print(f'[Email Fallback] OTP for {to_email}: {otp_code}')
-        return True
+        # SMTP belum dikonfigurasi -> jangan pernah cetak OTP ke log.
+        raise RuntimeError('email_service_unavailable')
     subject = 'Your O-RAN Dashboard Verification Code'
     body_html = f'''
     <div style="font-family: sans-serif; max-width: 480px; margin: auto;">
@@ -53,7 +57,6 @@ def send_verification_email(to_email: str, otp_code: str, username: str = '') ->
                 server.login(cfg['user'], cfg['password'])
             server.sendmail(cfg['from'], [to_email], msg.as_string())
         return True
-    except Exception as e:
-        print(f'[Email Error] Failed to send OTP to {to_email}: {e}')
-        print(f'[Email Fallback] OTP for {to_email}: {otp_code}')
-        return False
+    except Exception:
+        # Gagal kirim -> fail-closed, jangan pernah cetak OTP ke log.
+        raise RuntimeError('email_service_unavailable') from None

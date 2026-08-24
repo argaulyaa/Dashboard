@@ -127,8 +127,12 @@ def create_pending_registration(
 ) -> str:
     """
     Buat pending registration (belum aktif sampai OTP diverifikasi).
-    Kirim OTP ke email, return otp_code (untuk testing/fallback).
+    Kirim OTP ke email via SMTP, lalu return otp_code.
     Raise ValueError jika username/email sudah dipakai atau input tidak valid.
+    Raise RuntimeError('email_service_unavailable') jika SMTP tidak
+    dikonfigurasi atau pengiriman gagal (FAIL-CLOSED — OTP tidak pernah
+    dicetak ke log). Pending registration tetap tersimpan sehingga user bisa
+    retry via resend-otp setelah SMTP diperbaiki.
 
     Security: self-register SELALU menghasilkan role 'viewer' — parameter
     `role` sengaja DIABAIKAN agar client tidak bisa memilih role sendiri.
@@ -181,7 +185,8 @@ def create_pending_registration(
         )
         db.add(pending)
 
-    # Kirim email (atau print ke log jika SMTP tidak dikonfigurasi)
+    # Kirim OTP via SMTP. FAIL-CLOSED: kalau SMTP tidak siap, RuntimeError
+    # diteruskan ke endpoint -> HTTP 503 (OTP tidak pernah dicetak ke log).
     send_verification_email(email, otp_code, username)
     return otp_code
 
@@ -231,6 +236,9 @@ def resend_registration_otp(username: str) -> bool:
     """
     Kirim ulang OTP untuk pending registration.
     Return True jika berhasil, False jika pending tidak ditemukan.
+    Raise RuntimeError('email_service_unavailable') jika SMTP tidak
+    dikonfigurasi atau pengiriman gagal (FAIL-CLOSED — OTP baru tetap
+    tersimpan, user bisa retry).
     """
     import random
 
@@ -245,8 +253,10 @@ def resend_registration_otp(username: str) -> bool:
         otp_code = f"{random.randint(0, 999999):06d}"
         pending.otp_code = otp_code
         pending.otp_expires_at = time.time() + OTP_TTL_SECONDS
+        pending_email = pending.email  # simpan SEBELUM session ditutup
 
-    send_verification_email(pending.email, otp_code, username)
+    # Kirim OTP via SMTP (fail-closed — RuntimeError diteruskan ke endpoint).
+    send_verification_email(pending_email, otp_code, username)
     return True
 
 
