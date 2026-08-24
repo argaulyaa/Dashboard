@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { fetchProviders, fetchComponents } from "../api.js";
+import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
 
@@ -48,6 +48,12 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
   const [restartingId, setRestartingId] = useState(null);
   const [logTarget, setLogTarget] = useState(null);
 
+  // Provider RAN yang di-set AKTIF lewat backend (tabel active_providers,
+  // domain "ran"). Eksklusif per-domain: cuma satu provider atau null.
+  // Shape: {provider, username, activated_at} | null
+  const [activeActivation, setActiveActivation] = useState(null);
+  const [activationBusy, setActivationBusy] = useState(false);
+
   // Fetch daftar provider dari backend (data-driven, sama pola CorePage.jsx)
   useEffect(() => {
     fetchProviders("ran")
@@ -56,6 +62,12 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
         if (list.length) setActiveProvider(list[0].key);
       })
       .catch(() => setProviders([]));
+
+    // Status aktivasi provider RAN (siapa yang sedang AKTIF secara eksplisit).
+    // Backend menyimpan active provider PER-DOMAIN, jadi selalu query domain
+    // "ran" — jangan pernah campur dengan status domain core.
+    // Gagal diam-diam: fitur ini opsional bagi sisa halaman.
+    getActiveProvider("ran").then(setActiveActivation).catch(() => {});
   }, []);
 
   // Provider pertama = data live dari WebSocket (prop `components`).
@@ -87,6 +99,39 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
     }
   };
 
+  // ---- Provider activation state ----
+  const isViewer = getRole() === "viewer";
+  // Provider yang sedang aktif secara eksplisit (atau null).
+  const activatedKey = activeActivation?.provider || null;
+  const activatedLabel = providers.find((p) => p.key === activatedKey)?.label || activatedKey;
+  const isActiveTab = activatedKey != null && activatedKey === activeProvider;
+  const isBusy = activationBusy;
+
+  // Toggle Activate/Deactivate untuk provider RAN pada tab yang sedang
+  // dibuka. `activeProvider` = key tab (match DOMAIN_PROVIDERS["ran"]:
+  // "oai" / "srsran"), sama seperti pola CorePage.
+  const handleToggleActivation = async () => {
+    if (isViewer || !activeProvider) return;
+    setActivationBusy(true);
+    try {
+      if (isActiveTab) {
+        await deactivateProvider("ran");
+        setActiveActivation(null);
+      } else {
+        const res = await activateProvider("ran", activeProvider);
+        setActiveActivation({
+          provider: res.provider,
+          username: res.username,
+          activated_at: res.activated_at,
+        });
+      }
+    } catch (e) {
+      console.error("Provider activation failed", e);
+    } finally {
+      setActivationBusy(false);
+    }
+  };
+
   return (
     <div className="max-w-[1600px] mx-auto">
       {/* Page Header */}
@@ -99,20 +144,31 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
       <div className="flex flex-wrap gap-4 mb-8">
         {providers.map((p) => {
           const active = p.key === activeProvider;
+          // Tab yang provider-nya di-set AKTIF dapat badge + border khusus
+          const isActiveProvider = p.key === activatedKey;
           return (
             <button
               key={p.key}
               onClick={() => setActiveProvider(p.key)}
-              className={`flex items-center gap-3 px-6 py-4 rounded-xl border-2 transition-all duration-200 glass-card ${
-                active
-                  ? "border-primary text-primary shadow-md"
-                  : "border-transparent text-on-surface-variant hover:bg-surface-container"
+              className={`relative flex items-center gap-3 px-6 py-4 rounded-xl border-2 transition-all duration-200 glass-card ${
+                isActiveProvider
+                  ? "border-secondary shadow-md"
+                  : active
+                    ? "border-primary text-primary shadow-md"
+                    : "border-transparent text-on-surface-variant hover:bg-surface-container"
               }`}
             >
               <span className="material-symbols-outlined">{p.icon}</span>
               <div className="text-left">
                 <p className="text-xs uppercase tracking-widest font-bold opacity-70">Provider</p>
-                <p className="font-bold">{p.label}</p>
+                <p className="font-bold flex items-center gap-2">
+                  {p.label}
+                  {isActiveProvider && (
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-secondary-container text-on-secondary-container animate-pulse">
+                      ● ACTIVE
+                    </span>
+                  )}
+                </p>
               </div>
             </button>
           );
@@ -212,13 +268,7 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
                 ))}
               </div>
               <div className="flex gap-3">
-                <button
-                  className="px-6 py-2.5 border border-outline-variant text-on-surface font-bold text-label-lg rounded-lg hover:bg-surface-container-highest transition-colors flex items-center gap-2"
-                  onClick={() => hero && setLogTarget({ domain: "ran", compId: hero.id, compName: hero.name })}
-                >
-                  <span className="material-symbols-outlined text-lg">subject</span>
-                  View Logs
-                </button>
+                {/* 1) Console — dipindah ke kiri */}
                 {getRole() !== "viewer" && (
                   <button
                     className="px-6 py-2.5 bg-primary text-white font-bold rounded-lg shadow-md hover:brightness-110 active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -229,6 +279,45 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
                     Console
                   </button>
                 )}
+
+                {/* 2) View Logs */}
+                <button
+                  className="px-6 py-2.5 border border-outline-variant text-on-surface font-bold text-label-lg rounded-lg hover:bg-surface-container-highest transition-colors flex items-center gap-2"
+                  onClick={() => hero && setLogTarget({ domain: "ran", compId: hero.id, compName: hero.name })}
+                >
+                  <span className="material-symbols-outlined text-lg">subject</span>
+                  View Logs
+                </button>
+
+                {/* 3) Activate / Deactivate provider tab yang sedang dibuka.
+                    Eksklusif antar provider RAN (status per-domain dari
+                    getActiveProvider("ran")): kalau provider LAIN sedang aktif,
+                    tombol disabled. Viewer: lihat status tapi tombol disabled. */}
+                <button
+                  onClick={handleToggleActivation}
+                  disabled={isBusy || isViewer || (activatedKey != null && !isActiveTab)}
+                  title={
+                    isViewer
+                      ? "Viewers cannot activate providers"
+                      : activatedKey != null && !isActiveTab
+                        ? `Provider ${activatedLabel} sedang aktif — nonaktifkan dulu`
+                        : ""
+                  }
+                  className={
+                    isActiveTab
+                      ? `px-6 py-2.5 bg-error text-on-error font-bold rounded-lg shadow-md transition-all flex items-center gap-2 ${isViewer || isBusy ? "opacity-50 cursor-not-allowed" : "hover:brightness-110 active:scale-95"}`
+                      : `px-6 py-2.5 border border-outline-variant font-bold rounded-lg transition-all flex items-center gap-2 ${
+                          isViewer || isBusy || activatedKey != null
+                            ? "text-on-surface-variant opacity-50 cursor-not-allowed"
+                            : "text-secondary hover:bg-surface-container-low hover:border-secondary active:scale-95"
+                        }`
+                  }
+                >
+                  <span className="material-symbols-outlined text-lg">
+                    {isActiveTab ? "power_settings_new" : activatedKey != null && !isActiveTab ? "block" : "power_settings_new"}
+                  </span>
+                  {isBusy ? "..." : isActiveTab ? "Deactivate" : "Activate"}
+                </button>
               </div>
             </div>
           </div>
