@@ -145,3 +145,28 @@ export async function requestPasswordReset(username) {
   if (!res.ok) throw new Error("Request failed");
   return res.json();
 }
+
+export async function verifyEmail(username, otpCode) {
+  const res = await fetch(`${BASE}/auth/verify-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, otp_code: otpCode }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    const err = new Error(data?.detail || "verify_failed");
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+export async function resendOtp(username) {
+  const res = await fetch(`${BASE}/auth/resend-otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username }),
+  });
+  if (!res.ok) throw new Error("resend_failed");
+  return res.json();
+}

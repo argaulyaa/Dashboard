@@ -1,11 +1,12 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { register } from "../auth.js";
-import { setUser } from "../user.js";
 
 const SERVER_ERROR_MESSAGES = {
   username_taken: "That username is already registered.",
   username_required: "Please enter a username.",
+  email_taken: "That email address is already registered.",
+  invalid_email: "Please enter a valid email address.",
   password_too_short: "Password must be at least 8 characters.",
   password_needs_uppercase: "Password must include at least 1 uppercase letter.",
   password_needs_digit: "Password must include at least 1 number.",
@@ -22,6 +23,7 @@ export default function Register({ onLoginSuccess }) {
   const navigate = useNavigate();
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [role, setRoleState] = useState("engineer");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -35,22 +37,14 @@ export default function Register({ onLoginSuccess }) {
     setError(null);
 
     const pwdError = validatePassword(password);
-    if (pwdError) {
-      setError(pwdError);
-      return;
-    }
-    if (password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
+    if (pwdError) { setError(pwdError); return; }
+    if (password !== confirmPassword) { setError("Passwords do not match."); return; }
 
     setIsSubmitting(true);
     try {
-      await register(fullName, username, password, role);
-      const name = username.trim();
-      setUser(name);
-      onLoginSuccess?.(name);
-      navigate("/", { replace: true });
+      await register(fullName, username, email, password, role);
+      // Backend mengirim OTP ke email — arahkan ke halaman verifikasi
+      navigate("/verify", { state: { username, email } });
     } catch (err) {
       setError(SERVER_ERROR_MESSAGES[err.message] || "Failed to create account. Please try again.");
     } finally {
@@ -98,6 +92,31 @@ export default function Register({ onLoginSuccess }) {
                   disabled={isSubmitting}
                 />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-on-surface-variant block" htmlFor="email">
+                Email Address
+              </label>
+              <div className="relative group">
+                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">
+                  mail
+                </span>
+                <input
+                  className="w-full bg-white border border-outline-variant rounded-lg pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm"
+                  id="email"
+                  name="email"
+                  placeholder="you@example.com"
+                  required
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={isSubmitting}
+                />
+              </div>
+              <p className="text-xs text-on-surface-variant mt-1 ml-1">
+                A verification code will be sent to this address.
+              </p>
             </div>
 
             <div className="space-y-2">

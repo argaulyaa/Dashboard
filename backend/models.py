@@ -10,6 +10,7 @@ class UserModel(Base):
 
     username = Column(String(64), primary_key=True, index=True)
     full_name = Column(String(128), default="", nullable=False)
+    email = Column(String(256), nullable=True, index=True, unique=True)
     salt = Column(String(64), nullable=True)
     hash = Column(String(128), nullable=True)
     role = Column(String(32), default="engineer", nullable=False)
@@ -19,9 +20,28 @@ class UserModel(Base):
         return {
             "username": self.username,
             "full_name": self.full_name or "",
+            "email": self.email or "",
             "role": self.role or "engineer",
             "editable": True,
         }
+
+
+class PendingRegistrationModel(Base):
+    """Registrasi yang belum diverifikasi via OTP email.
+    Row dihapus setelah OTP valid (akun dibuat) atau expired.
+    """
+    __tablename__ = "pending_registrations"
+
+    username = Column(String(64), primary_key=True, index=True)
+    email = Column(String(256), nullable=False, index=True)
+    full_name = Column(String(128), default="", nullable=False)
+    role = Column(String(32), default="engineer", nullable=False)
+    salt = Column(String(64), nullable=False)
+    hash = Column(String(128), nullable=False)
+    otp_code = Column(String(8), nullable=False)
+    otp_expires_at = Column(Float, nullable=False)
+    created_at = Column(Float, default=time.time, nullable=False)
+
 
 
 class ReservationModel(Base):

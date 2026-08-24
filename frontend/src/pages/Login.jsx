@@ -1,11 +1,14 @@
 import React, { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { login } from "../auth.js";
 import { setUser } from "../user.js";
 import { requestPasswordReset } from "../api.js";
 
 export default function Login({ onLoginSuccess }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const justVerified = location.state?.verified === true;
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -67,10 +70,18 @@ export default function Login({ onLoginSuccess }) {
             </p>
           </div>
 
+          {/* Banner verifikasi berhasil — muncul kalau redirect dari /verify */}
+          {justVerified && (
+            <div className="mb-6 flex items-start gap-3 bg-secondary-container text-on-secondary-container rounded-lg px-4 py-3 border border-secondary-container">
+              <span className="material-symbols-outlined text-lg mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+              <p className="text-sm font-medium">Account verified! You can now log in.</p>
+            </div>
+          )}
+
           <form className="space-y-6" onSubmit={handleSubmit}>
             <div className="space-y-2">
               <label className="text-sm font-medium text-on-surface-variant block" htmlFor="username">
-                Username
+                Username or Email
               </label>
               <div className="relative group">
                 <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">
@@ -80,7 +91,7 @@ export default function Login({ onLoginSuccess }) {
                   className="w-full bg-white border border-outline-variant rounded-lg pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm"
                   id="username"
                   name="username"
-                  placeholder="Network ID"
+                  placeholder="Username or email address"
                   required
                   type="text"
                   value={username}

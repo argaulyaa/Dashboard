@@ -19,7 +19,8 @@ from models import AuditLogModel
 from auth import (
     authenticate, register_user, delete_user, list_registered_users,
     require_user, get_session_info, get_profile, update_full_name, change_password,
-    get_user_role, require_engineer, init_auth_data
+    get_user_role, require_engineer, init_auth_data,
+    create_pending_registration, verify_registration_otp, resend_registration_otp,
 )
 
 # Initialize database tables & seed data
@@ -70,8 +71,18 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     full_name: str = ""
     username: str
+    email: str
     password: str
     role: str = "engineer"
+
+
+class VerifyOtpRequest(BaseModel):
+    username: str
+    otp_code: str
+
+
+class ResendOtpRequest(BaseModel):
+    username: str
 
 
 class ReleaseRequest(BaseModel):
@@ -130,20 +141,65 @@ def login(body: LoginRequest, request: Request):
     token = authenticate(body.username, body.password, ip=client_ip)
     if not token:
         raise HTTPException(401, "invalid_credentials")
-    log_audit(body.username, "LOGIN", ip=client_ip)
-    return {"token": token, "user": body.username, "role": get_user_role(body.username)}
+    # Lookup real username (case: user logged in with email)
+    from auth import _session_for
+    session = _session_for(token)
+    real_username = session["user"] if session else body.username
+    log_audit(real_username, "LOGIN", ip=client_ip)
+    return {"token": token, "user": real_username, "role": get_user_role(real_username)}
 
 
 @app.post("/api/auth/register")
 def register(body: RegisterRequest, request: Request):
+    """Buat pending registration dan kirim OTP ke email. Akun belum aktif sampai OTP diverifikasi."""
+    client_ip = request.client.host if request.client else ""
     try:
-        register_user(body.username, body.password, body.full_name, body.role)
+        create_pending_registration(
+            username=body.username,
+            password=body.password,
+            email=body.email,
+            full_name=body.full_name,
+            role=body.role,
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
+    log_audit(body.username, "REGISTER_PENDING", detail=f"Email: {body.email}", ip=client_ip)
+    return {"ok": True, "username": body.username, "message": "OTP sent to email. Please verify."}
+
+
+@app.post("/api/auth/verify-email")
+def verify_email(body: VerifyOtpRequest, request: Request):
+    """Verifikasi OTP. Jika benar, akun dibuat dan token login dikembalikan."""
     client_ip = request.client.host if request.client else ""
-    token = authenticate(body.username, body.password, ip=client_ip)
-    log_audit(body.username, "REGISTER", detail=f"Role: {body.role}", ip=client_ip)
-    return {"token": token, "user": body.username, "role": get_user_role(body.username)}
+    try:
+        user_info = verify_registration_otp(body.username, body.otp_code)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    # Login langsung setelah verifikasi berhasil
+    from auth import get_db_session
+    from models import UserModel, SessionModel
+    import secrets as _secrets, time as _time
+    from auth import SESSION_TTL_SECONDS
+    with get_db_session() as db:
+        token = _secrets.token_urlsafe(32)
+        db.add(SessionModel(
+            token=token,
+            username=user_info["username"],
+            ip=client_ip,
+            login_time=_time.time(),
+            expires_at=_time.time() + SESSION_TTL_SECONDS,
+        ))
+    log_audit(body.username, "REGISTER_VERIFIED", detail=f"Email: {user_info['email']}", ip=client_ip)
+    return {"ok": True, "token": token, "user": user_info["username"], "role": user_info["role"]}
+
+
+@app.post("/api/auth/resend-otp")
+def resend_otp(body: ResendOtpRequest, request: Request):
+    """Kirim ulang OTP verifikasi."""
+    ok = resend_registration_otp(body.username)
+    if not ok:
+        raise HTTPException(404, "pending_not_found")
+    return {"ok": True, "message": "OTP resent."}
 
 
 @app.get("/api/auth/users")

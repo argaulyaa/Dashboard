@@ -15,6 +15,7 @@ import Console from "./pages/Console.jsx";
 import Login from "./pages/Login.jsx";
 import Profile from "./pages/Profile.jsx";
 import Register from "./pages/Register.jsx";
+import VerifyEmail from "./pages/VerifyEmail.jsx";
 import AuditLogs from "./pages/AuditLogs.jsx";
 import { isAuthenticated, logout } from "./auth.js";
 
@@ -129,6 +130,7 @@ const handleLogout = useCallback(() => {
         <Routes>
           <Route path="/login" element={<Login onLoginSuccess={setCurrentUser} />} />
           <Route path="/register" element={<Register onLoginSuccess={setCurrentUser} />} />
+          <Route path="/verify" element={<VerifyEmail />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </HashRouter>

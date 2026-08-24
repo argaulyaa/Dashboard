@@ -34,11 +34,11 @@ export async function login(username, password) {
   return data;
 }
 
-export async function register(fullName, username, password, role = "engineer") {
+export async function register(fullName, username, email, password, role = "engineer") {
   const res = await fetch("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ full_name: fullName, username, password, role }),
+    body: JSON.stringify({ full_name: fullName, username, email, password, role }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -47,11 +47,9 @@ export async function register(fullName, username, password, role = "engineer") 
     err.status = res.status;
     throw err;
   }
-  const data = await res.json();
-  setToken(data.token);
-  setUser(data.user || username);
-  setRole(data.role || role);
-  return data;
+  // Backend sekarang return { ok, username, message } — akun belum aktif,
+  // user harus verifikasi OTP dulu. JANGAN set token di sini.
+  return res.json();
 }
 
 export function logout() {

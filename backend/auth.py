@@ -16,7 +16,8 @@ from pathlib import Path
 from fastapi import Header, HTTPException
 
 from database import get_db_session, init_db
-from models import UserModel, SessionModel
+from models import UserModel, SessionModel, PendingRegistrationModel
+from email_service import send_verification_email
 
 # username -> password fallback for initial admin
 _DEFAULT_USERS = {"admin": "admin"}
@@ -111,8 +112,143 @@ def get_user_role(username: str) -> str:
     return "engineer"
 
 
-def register_user(username: str, password: str, full_name: str = "", role: str = "engineer") -> dict:
-    """Creates a new user account in database."""
+def _validate_email(email: str) -> bool:
+    """Basic email format validation."""
+    import re
+    pattern = r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email.strip()))
+
+
+OTP_TTL_SECONDS = 10 * 60  # 10 menit
+
+
+def create_pending_registration(
+    username: str, password: str, email: str, full_name: str = "", role: str = "engineer"
+) -> str:
+    """
+    Buat pending registration (belum aktif sampai OTP diverifikasi).
+    Kirim OTP ke email, return otp_code (untuk testing/fallback).
+    Raise ValueError jika username/email sudah dipakai atau input tidak valid.
+    """
+    import random
+
+    username = username.strip()
+    email = email.strip().lower()
+
+    if not username:
+        raise ValueError("username_required")
+    if not email or not _validate_email(email):
+        raise ValueError("invalid_email")
+
+    policy_error = _password_policy_error(password)
+    if policy_error:
+        raise ValueError(policy_error)
+
+    role = role.lower().strip()
+    if role not in ["engineer", "viewer"]:
+        role = "engineer"
+
+    salt_hex, hash_hex = _hash_password(password)
+    otp_code = f"{random.randint(0, 999999):06d}"
+    otp_expires_at = time.time() + OTP_TTL_SECONDS
+
+    with get_db_session() as db:
+        # Cek username dan email tidak duplikat di users table
+        if db.query(UserModel).filter(UserModel.username == username).first():
+            raise ValueError("username_taken")
+        if db.query(UserModel).filter(UserModel.email == email).first():
+            raise ValueError("email_taken")
+
+        # Hapus pending lama untuk username/email yang sama (retry register)
+        db.query(PendingRegistrationModel).filter(
+            (PendingRegistrationModel.username == username) |
+            (PendingRegistrationModel.email == email)
+        ).delete(synchronize_session=False)
+
+        pending = PendingRegistrationModel(
+            username=username,
+            email=email,
+            full_name=full_name.strip(),
+            role=role,
+            salt=salt_hex,
+            hash=hash_hex,
+            otp_code=otp_code,
+            otp_expires_at=otp_expires_at,
+            created_at=time.time(),
+        )
+        db.add(pending)
+
+    # Kirim email (atau print ke log jika SMTP tidak dikonfigurasi)
+    send_verification_email(email, otp_code, username)
+    return otp_code
+
+
+def verify_registration_otp(username: str, otp_code: str) -> dict:
+    """
+    Validasi OTP untuk pending registration.
+    Jika benar dan belum expired → buat akun di users table → hapus pending row.
+    Return dict user info jika sukses.
+    Raise ValueError jika OTP salah/expired atau username tidak ditemukan.
+    """
+    with get_db_session() as db:
+        pending = db.query(PendingRegistrationModel).filter(
+            PendingRegistrationModel.username == username
+        ).first()
+
+        if not pending:
+            raise ValueError("pending_not_found")
+        if time.time() > pending.otp_expires_at:
+            db.delete(pending)
+            raise ValueError("otp_expired")
+        if not secrets.compare_digest(pending.otp_code, otp_code.strip()):
+            raise ValueError("otp_invalid")
+
+        # OTP valid — buat akun
+        # Cek sekali lagi kalau-kalau username/email sudah ada (race condition)
+        if db.query(UserModel).filter(UserModel.username == pending.username).first():
+            db.delete(pending)
+            raise ValueError("username_taken")
+
+        user = UserModel(
+            username=pending.username,
+            full_name=pending.full_name,
+            email=pending.email,
+            salt=pending.salt,
+            hash=pending.hash,
+            role=pending.role,
+            created_at=time.time(),
+        )
+        db.add(user)
+        db.delete(pending)
+
+    return {"username": username, "email": pending.email, "role": pending.role}
+
+
+def resend_registration_otp(username: str) -> bool:
+    """
+    Kirim ulang OTP untuk pending registration.
+    Return True jika berhasil, False jika pending tidak ditemukan.
+    """
+    import random
+
+    with get_db_session() as db:
+        pending = db.query(PendingRegistrationModel).filter(
+            PendingRegistrationModel.username == username
+        ).first()
+        if not pending:
+            return False
+
+        # Generate OTP baru
+        otp_code = f"{random.randint(0, 999999):06d}"
+        pending.otp_code = otp_code
+        pending.otp_expires_at = time.time() + OTP_TTL_SECONDS
+
+    send_verification_email(pending.email, otp_code, username)
+    return True
+
+
+def register_user(username: str, password: str, full_name: str = "", role: str = "engineer", email: str = "") -> dict:
+    """Creates a new user account in database (tanpa email verification — dipakai oleh admin)."""
     username = username.strip()
     if not username:
         raise ValueError("username_required")
@@ -134,6 +270,7 @@ def register_user(username: str, password: str, full_name: str = "", role: str =
         user = UserModel(
             username=username,
             full_name=full_name.strip(),
+            email=email.strip().lower() if email else None,
             salt=salt_hex,
             hash=hash_hex,
             role=role,
@@ -223,14 +360,20 @@ def delete_user(username: str) -> None:
 
 
 def authenticate(username: str, password: str, ip: str = "") -> str | None:
-    """Authenticates user credentials and returns session token."""
+    """Authenticates user credentials and returns session token.
+    `username` bisa berupa username atau email address.
+    """
     with get_db_session() as db:
+        # Coba lookup by username dulu, lalu by email kalau tidak ketemu
         user = db.query(UserModel).filter(UserModel.username == username).first()
+        if not user and "@" in username:
+            user = db.query(UserModel).filter(UserModel.email == username.strip().lower()).first()
         if user and _verify_password(password, user.salt, user.hash):
+            real_username = user.username
             token = secrets.token_urlsafe(32)
             session = SessionModel(
                 token=token,
-                username=username,
+                username=real_username,
                 ip=ip,
                 login_time=time.time(),
                 expires_at=time.time() + SESSION_TTL_SECONDS,
