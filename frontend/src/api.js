@@ -147,13 +147,59 @@ export function openTelemetrySocket(onSnapshot) {
   return ws;
 }
 
+// ---- Forgot credentials: password reset via email OTP ----
+
 export async function requestPasswordReset(username) {
   const res = await fetch(`${BASE}/auth/forgot-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username }),
   });
-  if (!res.ok) throw new Error("Request failed");
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail?.reason || "request_failed");
+  return data;
+}
+
+export async function verifyPasswordResetOtp(username, otpCode) {
+  const res = await fetch(`${BASE}/auth/forgot-password/verify-otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, otp_code: otpCode }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    // detail bisa string (ValueError dari backend) atau array validasi pydantic
+    const reason = typeof data.detail === "string" ? data.detail : "verify_failed";
+    throw new Error(reason);
+  }
+  return data; // { ok, reset_token, username }
+}
+
+export async function confirmPasswordReset(resetToken, newPassword, confirmPassword) {
+  const res = await fetch(`${BASE}/auth/forgot-password/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      reset_token: resetToken,
+      new_password: newPassword,
+      confirm_password: confirmPassword,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const reason = typeof data.detail === "string" ? data.detail : "confirm_failed";
+    throw new Error(reason);
+  }
+  return data;
+}
+
+export async function resendPasswordResetOtp(username) {
+  const res = await fetch(`${BASE}/auth/forgot-password/resend-otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username }),
+  });
+  if (!res.ok) throw new Error("resend_failed");
   return res.json();
 }
 

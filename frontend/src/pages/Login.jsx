@@ -2,12 +2,38 @@ import React, { useState } from "react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { login } from "../auth.js";
 import { setUser } from "../user.js";
-import { requestPasswordReset } from "../api.js";
+import {
+  requestPasswordReset,
+  verifyPasswordResetOtp,
+  confirmPasswordReset,
+  resendPasswordResetOtp,
+} from "../api.js";
+
+// Pesan error ramah utk kode ValueError dari backend reset-password
+const RESET_ERROR_MESSAGES = {
+  otp_invalid: "Incorrect code. Please check your email and try again.",
+  otp_expired: "This code has expired. Request a new code and try again.",
+  pending_not_found: "No active reset request. Start again from your username.",
+  invalid_reset_token: "Your reset session has expired. Please start again.",
+  passwords_do_not_match: "Passwords do not match.",
+  password_too_short: "Password must be at least 8 characters.",
+  password_needs_uppercase: "Password must include at least 1 uppercase letter.",
+  password_needs_digit: "Password must include at least 1 number.",
+  email_service_unavailable: "Could not send the email right now. Please try again later.",
+};
+
+function validateNewPassword(pwd) {
+  if (pwd.length < 8) return "Password must be at least 8 characters.";
+  if (!/[A-Z]/.test(pwd)) return "Password must include at least 1 uppercase letter.";
+  if (!/[0-9]/.test(pwd)) return "Password must include at least 1 number.";
+  return null;
+}
 
 export default function Login({ onLoginSuccess }) {
   const navigate = useNavigate();
   const location = useLocation();
   const justVerified = location.state?.verified === true;
+  const justReset = location.state?.passwordReset === true;
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -15,17 +41,109 @@ export default function Login({ onLoginSuccess }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
-  // Forgot credentials modal state
+  // Forgot credentials wizard state
+  // Step: 'identify' (username/email) -> 'otp' (kode dari email)
+  //       -> 'newpass' (2 field password baru) -> 'done'
   const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotStep, setForgotStep] = useState("identify");
   const [forgotUsername, setForgotUsername] = useState("");
-  const [forgotStep, setForgotStep] = useState("idle"); // 'idle'|'submitting'|'done'|'error'
+  const [otpCode, setOtpCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [resetToken, setResetToken] = useState("");
+  const [forgotBusy, setForgotBusy] = useState(false);
   const [forgotError, setForgotError] = useState(null);
 
   const closeForgotModal = () => {
     setShowForgotModal(false);
-    setForgotStep("idle");
+    setForgotStep("identify");
     setForgotUsername("");
+    setOtpCode("");
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setResetToken("");
     setForgotError(null);
+    setForgotBusy(false);
+  };
+
+  // Langkah 1: minta OTP dikirim ke email akun.
+  // Backend sengaja selalu sukses untuk username yang tidak dikenal
+  // (anti-enumeration), jadi error di sini hanya jaringan/SMTP mati.
+  const handleIdentifySubmit = async () => {
+    if (!forgotUsername.trim()) {
+      setForgotError("Please enter your username or email.");
+      return;
+    }
+    setForgotError(null);
+    setForgotBusy(true);
+    try {
+      await requestPasswordReset(forgotUsername.trim());
+      setForgotStep("otp");
+    } catch (err) {
+      setForgotError(RESET_ERROR_MESSAGES[err.message] || "Could not submit request. Please try again.");
+    } finally {
+      setForgotBusy(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    setForgotError(null);
+    setForgotBusy(true);
+    try {
+      await resendPasswordResetOtp(forgotUsername.trim());
+    } catch (err) {
+      setForgotError(RESET_ERROR_MESSAGES[err.message] || "Could not resend the code. Please try again.");
+    } finally {
+      setForgotBusy(false);
+    }
+  };
+
+  // Langkah 2: verifikasi OTP -> dapat reset_token sekali pakai
+  const handleOtpSubmit = async () => {
+    if (!otpCode.trim()) {
+      setForgotError("Please enter the 6-digit code from your email.");
+      return;
+    }
+    setForgotError(null);
+    setForgotBusy(true);
+    try {
+      const data = await verifyPasswordResetOtp(forgotUsername.trim(), otpCode.trim());
+      setResetToken(data.reset_token);
+      setForgotStep("newpass");
+    } catch (err) {
+      setForgotError(RESET_ERROR_MESSAGES[err.message] || "Verification failed. Please try again.");
+    } finally {
+      setForgotBusy(false);
+    }
+  };
+
+  // Langkah 3: simpan password baru (2 field), lalu redirect ke login
+  const handleNewPasswordSubmit = async () => {
+    const pwdError = validateNewPassword(newPassword);
+    if (pwdError) {
+      setForgotError(pwdError);
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setForgotError("Passwords do not match.");
+      return;
+    }
+    setForgotError(null);
+    setForgotBusy(true);
+    try {
+      await confirmPasswordReset(resetToken, newPassword, confirmNewPassword);
+      setForgotStep("done");
+      // Redirect ke halaman login dengan banner konfirmasi
+      setTimeout(() => {
+        closeForgotModal();
+        navigate("/login", { replace: true, state: { passwordReset: true } });
+      }, 1600);
+    } catch (err) {
+      setForgotError(RESET_ERROR_MESSAGES[err.message] || "Could not reset password. Please try again.");
+    } finally {
+      setForgotBusy(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -75,6 +193,14 @@ export default function Login({ onLoginSuccess }) {
             <div className="mb-6 flex items-start gap-3 bg-secondary-container text-on-secondary-container rounded-lg px-4 py-3 border border-secondary-container">
               <span className="material-symbols-outlined text-lg mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
               <p className="text-sm font-medium">Account verified! You can now log in.</p>
+            </div>
+          )}
+
+          {/* Banner reset password berhasil — muncul setelah wizard forgot selesai */}
+          {justReset && (
+            <div className="mb-6 flex items-start gap-3 bg-secondary-container text-on-secondary-container rounded-lg px-4 py-3 border border-secondary-container">
+              <span className="material-symbols-outlined text-lg mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>lock_reset</span>
+              <p className="text-sm font-medium">Password updated successfully! Log in with your new password.</p>
             </div>
           )}
 
@@ -222,10 +348,10 @@ export default function Login({ onLoginSuccess }) {
               </button>
             </div>
 
-            {forgotStep !== "done" ? (
+            {forgotStep === "identify" && (
               <>
                 <p className="text-sm text-on-surface-variant mb-4">
-                  Enter your username. Your administrator will be notified to reset your credentials.
+                  Enter your username or email. We'll send a 6-digit reset code to the registered email address.
                 </p>
                 <div className="relative group mb-4">
                   <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">
@@ -233,11 +359,11 @@ export default function Login({ onLoginSuccess }) {
                   </span>
                   <input
                     className="w-full bg-white border border-outline-variant rounded-lg pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm"
-                    placeholder="Your username"
+                    placeholder="Username or email address"
                     value={forgotUsername}
                     onChange={(e) => setForgotUsername(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && e.currentTarget.nextSibling?.click?.()}
-                    disabled={forgotStep === "submitting"}
+                    onKeyDown={(e) => e.key === "Enter" && handleIdentifySubmit()}
+                    disabled={forgotBusy}
                     autoFocus
                   />
                 </div>
@@ -246,35 +372,141 @@ export default function Login({ onLoginSuccess }) {
                 )}
                 <button
                   className="w-full bg-primary text-white py-3 rounded-lg font-semibold hover:brightness-110 transition-all disabled:opacity-60 flex items-center justify-center gap-2"
-                  onClick={async () => {
-                    if (!forgotUsername.trim()) {
-                      setForgotError("Please enter your username.");
-                      return;
-                    }
-                    setForgotError(null);
-                    setForgotStep("submitting");
-                    try {
-                      await requestPasswordReset(forgotUsername.trim());
-                      setForgotStep("done");
-                    } catch {
-                      setForgotStep("error");
-                      setForgotError("Could not submit request. Please try again.");
-                    }
-                  }}
-                  disabled={forgotStep === "submitting"}
+                  onClick={handleIdentifySubmit}
+                  disabled={forgotBusy}
                   type="button"
                 >
-                  {forgotStep === "submitting" ? (
+                  {forgotBusy ? (
                     <>
                       <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
-                      Submitting...
+                      Sending code...
                     </>
                   ) : (
-                    "Request Reset"
+                    "Send Reset Code"
                   )}
                 </button>
               </>
-            ) : (
+            )}
+
+            {forgotStep === "otp" && (
+              <>
+                <p className="text-sm text-on-surface-variant mb-4">
+                  Enter the 6-digit code we sent to your registered email address.
+                </p>
+                <div className="relative group mb-4">
+                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">
+                    password
+                  </span>
+                  <input
+                    className="w-full bg-white border border-outline-variant rounded-lg pl-10 pr-4 py-3 text-center text-lg tracking-[0.5em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                    placeholder="••••••"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                    onKeyDown={(e) => e.key === "Enter" && handleOtpSubmit()}
+                    disabled={forgotBusy}
+                    autoFocus
+                  />
+                </div>
+                {forgotError && (
+                  <p className="text-error text-xs mb-3" role="alert">{forgotError}</p>
+                )}
+                <button
+                  className="w-full bg-primary text-white py-3 rounded-lg font-semibold hover:brightness-110 transition-all disabled:opacity-60 flex items-center justify-center gap-2"
+                  onClick={handleOtpSubmit}
+                  disabled={forgotBusy || otpCode.length < 6}
+                  type="button"
+                >
+                  {forgotBusy ? (
+                    <>
+                      <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
+                      Verifying...
+                    </>
+                  ) : (
+                    "Verify Code"
+                  )}
+                </button>
+                <button
+                  className="w-full mt-2 text-xs text-on-surface-variant hover:text-primary transition-colors bg-transparent border-none cursor-pointer p-1"
+                  onClick={handleResendOtp}
+                  disabled={forgotBusy}
+                  type="button"
+                >
+                  Didn't receive the code? Resend
+                </button>
+              </>
+            )}
+
+            {forgotStep === "newpass" && (
+              <>
+                <p className="text-sm text-on-surface-variant mb-4">
+                  Choose a new password for <strong>{forgotUsername}</strong>.
+                </p>
+                <div className="space-y-3 mb-4">
+                  <div className="relative group">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">
+                      lock
+                    </span>
+                    <input
+                      className="w-full bg-white border border-outline-variant rounded-lg pl-10 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm"
+                      placeholder="New password (min 8 chars, 1 uppercase, 1 number)"
+                      type={showNewPassword ? "text" : "password"}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleNewPasswordSubmit()}
+                      disabled={forgotBusy}
+                      autoFocus
+                    />
+                    <button
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface transition-colors p-1"
+                      onClick={() => setShowNewPassword((v) => !v)}
+                      type="button"
+                      tabIndex={-1}
+                    >
+                      <span className="material-symbols-outlined text-[20px]">
+                        {showNewPassword ? "visibility_off" : "visibility"}
+                      </span>
+                    </button>
+                  </div>
+                  <div className="relative group">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">
+                      lock_reset
+                    </span>
+                    <input
+                      className="w-full bg-white border border-outline-variant rounded-lg pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm"
+                      placeholder="Confirm new password"
+                      type={showNewPassword ? "text" : "password"}
+                      value={confirmNewPassword}
+                      onChange={(e) => setConfirmNewPassword(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleNewPasswordSubmit()}
+                      disabled={forgotBusy}
+                    />
+                  </div>
+                </div>
+                {forgotError && (
+                  <p className="text-error text-xs mb-3" role="alert">{forgotError}</p>
+                )}
+                <button
+                  className="w-full bg-primary text-white py-3 rounded-lg font-semibold hover:brightness-110 transition-all disabled:opacity-60 flex items-center justify-center gap-2"
+                  onClick={handleNewPasswordSubmit}
+                  disabled={forgotBusy}
+                  type="button"
+                >
+                  {forgotBusy ? (
+                    <>
+                      <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
+                      Saving...
+                    </>
+                  ) : (
+                    "Reset Password"
+                  )}
+                </button>
+              </>
+            )}
+
+            {forgotStep === "done" && (
               <div className="text-center py-4">
                 <span
                   className="material-symbols-outlined text-5xl text-secondary mb-4 block"
@@ -282,17 +514,10 @@ export default function Login({ onLoginSuccess }) {
                 >
                   check_circle
                 </span>
-                <p className="font-semibold text-on-surface mb-2">Request Submitted</p>
+                <p className="font-semibold text-on-surface mb-2">Password Updated</p>
                 <p className="text-sm text-on-surface-variant">
-                  Please contact your system administrator to complete the password reset.
+                  Your password has been changed. Redirecting you to login...
                 </p>
-                <button
-                  className="mt-6 w-full bg-surface-container text-on-surface py-2.5 rounded-lg font-semibold hover:bg-surface-container-high transition-all"
-                  onClick={closeForgotModal}
-                  type="button"
-                >
-                  Close
-                </button>
               </div>
             )}
           </div>

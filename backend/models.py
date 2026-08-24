@@ -44,6 +44,24 @@ class PendingRegistrationModel(Base):
 
 
 
+class PendingPasswordResetModel(Base):
+    """Permintaan reset password (forgot credentials) yang belum diverifikasi
+    via OTP email. Alur: user minta reset -> OTP dikirim ke email terdaftar ->
+    OTP diverifikasi -> reset_token sekali pakai di-issue -> password baru
+    disimpan -> row ini dihapus dan semua session user dicabut.
+    """
+    __tablename__ = "pending_password_resets"
+
+    username = Column(String(64), primary_key=True, index=True)
+    email = Column(String(256), nullable=False, index=True)
+    otp_code = Column(String(8), nullable=False)
+    otp_expires_at = Column(Float, nullable=False)
+    # reset_token sekali pakai, diisi setelah OTP terverifikasi
+    reset_token = Column(String(128), nullable=True)
+    reset_token_expires_at = Column(Float, nullable=True)
+    created_at = Column(Float, default=time.time, nullable=False)
+
+
 class ReservationModel(Base):
     __tablename__ = "reservations"
 

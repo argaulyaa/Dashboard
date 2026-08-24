@@ -16,8 +16,8 @@ from pathlib import Path
 from fastapi import Header, HTTPException
 
 from database import get_db_session, init_db
-from models import UserModel, SessionModel, PendingRegistrationModel
-from email_service import send_verification_email
+from models import UserModel, SessionModel, PendingRegistrationModel, PendingPasswordResetModel
+from email_service import send_verification_email, send_password_reset_email
 
 # username -> password fallback for initial admin
 _DEFAULT_USERS = {"admin": "admin"}
@@ -346,6 +346,150 @@ def change_password(username: str, current_password: str, new_password: str) -> 
 
         # Invalidate all active sessions for this user
         db.query(SessionModel).filter(SessionModel.username == username).delete()
+
+
+# ---- Forgot credentials: password reset via email OTP ----
+
+RESET_TOKEN_TTL_SECONDS = 10 * 60  # reset_token sekali pakai, umur pendek
+
+
+def request_password_reset(username_or_email: str) -> str:
+    """Mulai alur forgot-password: kirim OTP ke email terdaftar.
+
+    Return 'sent' jika OTP dikirim. Raise ValueError('user_not_found') jika
+    akun tidak ada ATAU tidak punya email (tidak bisa reset mandiri).
+    Raise RuntimeError('email_service_unavailable') jika SMTP gagal/tidak
+    dikonfigurasi (fail-closed — OTP tidak pernah dicetak ke log). Row pending
+    tetap dibuat sebelum pengiriman sehingga retry/resend bisa dilakukan.
+
+    Anti-enumeration di level HTTP: endpoint memetakan ValueError ini ke
+    respons generik, jadi penebak tidak bisa membedakan akun ada/tidak.
+    """
+    import random
+
+    key = username_or_email.strip()
+    if not key:
+        raise ValueError("user_not_found")
+
+    with get_db_session() as db:
+        # Lookup by username atau email (login juga menerima dua-duanya)
+        user = db.query(UserModel).filter(UserModel.username == key).first()
+        if not user and "@" in key:
+            user = db.query(UserModel).filter(UserModel.email == key.lower()).first()
+
+        if not user or not (user.email or "").strip():
+            raise ValueError("user_not_found")
+
+        email = (user.email or "").strip().lower()
+        username = user.username
+
+        # Satu permintaan aktif per user; permintaan baru menggantikan yang lama.
+        db.query(PendingPasswordResetModel).filter(
+            PendingPasswordResetModel.username == username
+        ).delete(synchronize_session=False)
+
+        otp_code = f"{random.randint(0, 999999):06d}"
+        db.add(PendingPasswordResetModel(
+            username=username,
+            email=email,
+            otp_code=otp_code,
+            otp_expires_at=time.time() + OTP_TTL_SECONDS,
+            created_at=time.time(),
+        ))
+
+    send_password_reset_email(email, otp_code, username)
+    return "sent"
+
+
+def resend_password_reset_otp(username_or_email: str) -> bool:
+    """Kirim ulang OTP untuk permintaan reset yang masih pending.
+    Return True jika terkirim, False jika tidak ada permintaan pending.
+    Fail-closed sama seperti request_password_reset."""
+    with get_db_session() as db:
+        key = username_or_email.strip()
+        row = db.query(PendingPasswordResetModel).filter(
+            (PendingPasswordResetModel.username == key)
+            | (PendingPasswordResetModel.email == key.lower())
+        ).first()
+        if not row:
+            return False
+
+        import random
+        otp_code = f"{random.randint(0, 999999):06d}"
+        row.otp_code = otp_code
+        row.otp_expires_at = time.time() + OTP_TTL_SECONDS
+        row.reset_token = None
+        row.reset_token_expires_at = None
+        row_email = row.email       # simpan SEBELUM session ditutup
+        row_username = row.username  # (hindari DetachedInstanceError)
+
+    send_password_reset_email(row_email, otp_code, row_username)
+    return True
+
+
+def verify_password_reset_otp(username_or_email: str, otp_code: str) -> dict:
+    """Validasi OTP reset password. Jika benar & belum expired, issue
+    reset_token sekali pakai dan hapus OTP (anti replay).
+    Return {'username': ..., 'reset_token': ...}.
+    Raise ValueError('pending_not_found'|'otp_expired'|'otp_invalid')."""
+    with get_db_session() as db:
+        key = username_or_email.strip()
+        row = db.query(PendingPasswordResetModel).filter(
+            (PendingPasswordResetModel.username == key)
+            | (PendingPasswordResetModel.email == key.lower())
+        ).first()
+        if not row:
+            raise ValueError("pending_not_found")
+        if time.time() > row.otp_expires_at:
+            db.delete(row)
+            raise ValueError("otp_expired")
+        if not secrets.compare_digest(str(row.otp_code), otp_code.strip()):
+            raise ValueError("otp_invalid")
+
+        token = secrets.token_urlsafe(32)
+        row.otp_code = ""
+        row.reset_token = token
+        row.reset_token_expires_at = time.time() + RESET_TOKEN_TTL_SECONDS
+        row_username = row.username  # simpan sebelum session ditutup
+
+    return {"username": row_username, "reset_token": token}
+
+
+def confirm_password_reset(reset_token: str, new_password: str) -> dict:
+    """Terapkan password baru menggunakan reset_token sekali pakai.
+    Password policy divalidasi, semua sesi aktif user dicabut, dan row pending
+    dihapus (token hangus setelah dipakai).
+    Return {'username': ...}. Raise ValueError('invalid_reset_token'|policy)."""
+    policy_error = _password_policy_error(new_password)
+    if policy_error:
+        raise ValueError(policy_error)
+
+    with get_db_session() as db:
+        row = db.query(PendingPasswordResetModel).filter(
+            PendingPasswordResetModel.reset_token == reset_token.strip()
+        ).first()
+        if (
+            not row
+            or not row.reset_token
+            or time.time() > row.reset_token_expires_at
+        ):
+            raise ValueError("invalid_reset_token")
+
+        user = db.query(UserModel).filter(UserModel.username == row.username).first()
+        if not user:
+            db.delete(row)
+            raise ValueError("invalid_reset_token")
+
+        salt_hex, hash_hex = _hash_password(new_password)
+        user.salt = salt_hex
+        user.hash = hash_hex
+
+        # Reset password sukses -> cabut semua sesi aktif si user
+        db.query(SessionModel).filter(SessionModel.username == row.username).delete()
+        row_username = row.username  # simpan sebelum session ditutup
+        db.delete(row)
+
+    return {"username": row_username}
 
 
 def list_registered_users() -> list[dict]:

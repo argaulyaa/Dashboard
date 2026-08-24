@@ -21,6 +21,8 @@ from auth import (
     require_user, get_session_info, get_profile, update_full_name, change_password,
     get_user_role, require_engineer, init_auth_data,
     create_pending_registration, verify_registration_otp, resend_registration_otp,
+    request_password_reset, resend_password_reset_otp,
+    verify_password_reset_otp, confirm_password_reset,
 )
 
 # Initialize database tables & seed data
@@ -104,7 +106,23 @@ class ChangePasswordRequest(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
+    # Boleh username ATAU email (sama seperti login)
     username: str
+
+
+class VerifyResetOtpRequest(BaseModel):
+    username: str
+    otp_code: str
+
+
+class ResendResetOtpRequest(BaseModel):
+    username: str
+
+
+class ConfirmPasswordResetRequest(BaseModel):
+    reset_token: str
+    new_password: str
+    confirm_password: str
 
 
 def _get_adapter(domain: str, provider: str = None):
@@ -318,13 +336,85 @@ def change_password_endpoint(body: ChangePasswordRequest, current_user: str = De
 
 @app.post("/api/auth/forgot-password")
 def forgot_password(body: ForgotPasswordRequest, request: Request):
-    """Records a password reset request to the audit log.
-    Always returns success to avoid leaking whether a username exists.
-    Admin can view the request via GET /api/audit-logs.
-    """
+    """Langkah 1: user minta reset -> OTP dikirim ke email terdaftar.
+
+    Selalu balas generik (anti user-enumeration): sukses maupun akun tidak
+    ditemukan sama-sama dapat pesan yang sama. SMTP bermasalah -> 503
+    (fail-closed, OTP tidak pernah dicetak ke log)."""
     client_ip = request.client.host if request.client else ""
+    try:
+        request_password_reset(body.username)
+    except ValueError:
+        # Akun tidak ada / tanpa email — tetap jawab generik.
+        pass
+    except RuntimeError as e:
+        if str(e) == 'email_service_unavailable':
+            raise HTTPException(
+                503,
+                detail={
+                    'ok': False,
+                    'reason': 'email_service_unavailable',
+                    'message': 'Gagal mengirim email verifikasi. Coba lagi nanti.',
+                },
+            )
+        raise
     log_audit(body.username.strip(), "FORGOT_PASSWORD_REQUEST", ip=client_ip)
-    return {"ok": True, "message": "If the account exists, an administrator has been notified."}
+    return {"ok": True, "message": "If the account exists, a reset code has been sent to its email."}
+
+
+@app.post("/api/auth/forgot-password/resend-otp")
+def forgot_password_resend(body: ResendResetOtpRequest, request: Request):
+    """Kirim ulang OTP reset password untuk permintaan yang masih pending."""
+    try:
+        ok = resend_password_reset_otp(body.username)
+    except RuntimeError as e:
+        if str(e) == 'email_service_unavailable':
+            raise HTTPException(
+                503,
+                detail={
+                    'ok': False,
+                    'reason': 'email_service_unavailable',
+                    'message': 'Gagal mengirim email verifikasi. Coba lagi nanti.',
+                },
+            )
+        raise
+    # 404 hanya jika memang tidak ada permintaan pending — bukan sinyal enumerasi.
+    if not ok:
+        raise HTTPException(404, "pending_not_found")
+    return {"ok": True, "message": "OTP resent."}
+
+
+@app.post("/api/auth/forgot-password/verify-otp")
+def forgot_password_verify(body: VerifyResetOtpRequest, request: Request):
+    """Langkah 2: verifikasi OTP -> issue reset_token sekali pakai."""
+    client_ip = request.client.host if request.client else ""
+    try:
+        result = verify_password_reset_otp(body.username, body.otp_code)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    log_audit(result["username"], "PASSWORD_RESET_OTP_VERIFIED", ip=client_ip)
+    return {"ok": True, "reset_token": result["reset_token"], "username": result["username"]}
+
+
+@app.post("/api/auth/forgot-password/confirm")
+def forgot_password_confirm(body: ConfirmPasswordResetRequest, request: Request):
+    """Langkah 3: simpan password baru pakai reset_token sekali pakai.
+
+    Form punya 2 field (new + confirm) — dicocokkan di sini juga supaya
+    aman walau validasi client dilewati. Semua sesi aktif si user dicabut."""
+    client_ip = request.client.host if request.client else ""
+    if body.new_password != body.confirm_password:
+        raise HTTPException(400, "passwords_do_not_match")
+    try:
+        result = confirm_password_reset(body.reset_token, body.new_password)
+    except ValueError as e:
+        status = 400
+        raise HTTPException(status, str(e))
+    log_audit(
+        result["username"], "PASSWORD_RESET_COMPLETED",
+        detail="via email OTP self-service", ip=client_ip,
+    )
+    return {"ok": True, "username": result["username"], "redirect": "/login"}
 
 
 @app.get("/api/{domain}/components")
