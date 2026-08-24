@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-08-24 - RIC page: kartu Active xApps dihapus, kotak FlexRIC full-width
+
+### Perubahan
+- `frontend/src/pages/RicPage.jsx` (satu-satunya file yang berubah, 1 insersi /
+  49-51 baris dihapus):
+  - Kartu samping **Active xApps** (daftar xApp + tombol MANAGE xAPPS) dihapus
+    dari RIC page.
+  - Kartu status utama FlexRIC lebarnya jadi **full-width** (`col-span-12`,
+    sebelumnya `lg:col-span-8`).
+  - Dead code ikut dibersihkan: konstanta `XAPP_KIND`, `XAPP_ICON`, dan filter
+    `xapps` (tidak ada lagi referensi xApp di RicPage).
+
+### Verifikasi
+- `npx vite build` PASS (66 modules → `index-BS5jEo0N.js`).
+- Live check NodePort core (`10.91.2.151:30090`) serve bundle
+  `assets/index-BS5jEo0N.js` — hash identik dengan build lokal, deploy CI
+  terkonfirmasi hidup.
+- Tidak ada perubahan backend; endpoint & adapter RIC tidak disentuh.
+
+### Catatan
+- Implementasi landed via commit `3ff8fa9` (feat(ric): remove Active xApps
+  card, widen FlexRIC card to full width); run dev paralel menghasilkan diff
+  yang fungsional identik dan sudah direkonsiliasi ke origin/main.
+
 ## 2026-08-24 - RAN page: tombol Console kiri, Activate kanan, eksklusif antar provider RAN
 
 ### Perubahan
