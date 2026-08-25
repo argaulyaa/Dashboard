@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-25 - Header Core page jadi full-width top strip
+
+### Keputusan Owner
+Header halaman Core (judul + kotak Current Operator) dipindah jadi strip
+full-width di PALING ATAS konten Core page, menggantikan posisi visual
+TopBar global yang sudah dikosongkan sebelumnya.
+
+### Perubahan
+- `frontend/src/pages/CorePage.jsx`:
+  - Block header (`Core Network Management` + subtitle + kotak Current
+    Operator) dikeluarkan dari container `max-w-[1400px] mx-auto`.
+  - Return kini fragment `<>` dengan 2 anak: (1) header-strip full-width
+    `relative z-10 bg-surface-bright border-b border-outline-variant px-gutter py-4 flex items-center justify-between gap-4`
+    (pola visual diambil dari TopBar lama), (2) container
+    `max-w-[1400px] mx-auto` berisi sisa konten (Provider Selector Tabs,
+    Bento Grid, tabel connections).
+  - Isi/badge Current Operator, state, dan logika TIDAK diubah.
+- `TopBar.jsx`, `App.jsx`, dan page lain tidak tersentuh.
+
+### Verifikasi
+- `npm run build` (vite v5.4.21): sukses, 66 modules transformed, exit 0.
+- Commit `aaa2b78` pushed ke `main`.
+
 ## 2026-08-25 - TopBar dibersihkan: search, telemetry, notifikasi, bantuan dihapus
 
 ### Keputusan Owner
