@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-08-25 - TopBar sticky: judul per-page + Current Operator, CorePage strip di-revert
+
+### Keputusan Owner
+Strip full-width di CorePage (t_4c729fd9) dibatalkan. Judul halaman + badge
+Current Operator kini dirender di TopBar global yang jadi STICKY — tetap
+terlihat saat scroll, berlaku untuk semua halaman.
+
+### Perubahan
+- `frontend/src/components/TopBar.jsx` (rewrite):
+  - `fixed` → `sticky top-0` in-flow; lebar tetap `md:w-[calc(100%-280px)]
+    md:ml-sidebar-width`, `z-40`, bg-surface-bright, border-b (identik visual).
+  - Kiri: judul halaman aktif via `useLocation()` (map path → title:
+    Overview / Core Network Management / Radio Access Network / RIC
+    Management / Node Reservations / Profile / Audit Logs).
+  - Kanan: badge Current Operator HANYA di route `/core`, `/ran`, `/ric`.
+    Data-driven dari backend: `fetchProviders(domain)` sekali per mount +
+    health provider non-default (`fetchComponents`) sekali; health default
+    provider di-poll tiap 15 detik selama user di halaman domain itu.
+    Pemilihan operator sama dgn logika halaman: provider healthy pertama,
+    fallback degraded, kalau nggak ada → "None" + "NO ACTIVE PROVIDER".
+  - Search/telemetry/notifikasi/bantuan TETAP terhapus (keputusan t_2d1fb375).
+- `frontend/src/pages/CorePage.jsx`: REVERT persis ke state sebelum commit
+  strip (checkout dari 4c8cfa6) — header "Core Network Management" + kotak
+  Current Operator balik ke dalam container `max-w-[1400px] mx-auto`,
+  fragment strip full-width dihapus.
+- `frontend/src/App.jsx`: `<main>` `pt-20` → `pt-4` karena TopBar bukan fixed
+  lagi (tidak ada konten tertutup); sisanya tak disentuh.
+- Catatan: badge Current Operator di CorePage/RanPage/RicPage tetap ada
+  (redundansi sengaja, konten halaman tidak diubah).
+
+### Verifikasi
+- `npm run build` (vite): sukses, exit 0, built in 2.31s.
+
 ## 2026-08-25 - Header Core page jadi full-width top strip
 
 ### Keputusan Owner

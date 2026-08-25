@@ -149,7 +149,9 @@ const handleLogout = useCallback(() => {
         <TopBar wsStatus={wsStatus} />
         <MobileNav />
 
-        <main className="pt-20 md:ml-sidebar-width min-h-screen px-container-padding-mobile md:px-container-padding-desktop pb-24 md:pb-10">
+        {/* TopBar kini sticky in-flow (bukan fixed), jadi <main> tidak butuh
+            padding-top tinggi — cukup jarak kecil di mobile. */}
+        <main className="pt-4 md:ml-sidebar-width min-h-screen px-container-padding-mobile md:px-container-padding-desktop pb-24 md:pb-10">
           {error && (
           <div className="text-error font-mono text-[13px] mb-4">Failed to load data: {error}</div>
           )}
