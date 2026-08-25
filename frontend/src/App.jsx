@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { HashRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Sidebar from "./components/Sidebar.jsx";
 import TopBar from "./components/TopBar.jsx";
+import { PageHeaderProvider } from "./components/PageHeaderContext.jsx";
 import MobileNav from "./components/MobileNav.jsx";
 import ControlDrawer from "./components/ControlDrawer.jsx";
 import Overview from "./pages/Overview.jsx";
@@ -156,6 +157,9 @@ const handleLogout = useCallback(() => {
           <div className="text-error font-mono text-[13px] mb-4">Failed to load data: {error}</div>
           )}
 
+          {/* PageHeaderProvider: page aktif set judul/subtitle via usePageHeader(),
+              TopBar sticky membacanya. Membungkus seluruh <Routes>. */}
+          <PageHeaderProvider>
           <Routes>
             <Route
               path="/"
@@ -250,6 +254,7 @@ const handleLogout = useCallback(() => {
               element={<Console data={data} currentUser={currentUser} />}
             />
           </Routes>
+          </PageHeaderProvider>
         </main>
 
         {selected && (

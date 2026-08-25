@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
+import { usePageHeader } from "../components/PageHeaderContext.jsx";
 
 const STATUS_META = {
   healthy: { label: "Active", dot: "bg-secondary", text: "text-secondary", pulse: true },
@@ -9,6 +10,24 @@ const STATUS_META = {
   down: { label: "Critical", dot: "bg-error", text: "text-error", pulse: false },
   restarting: { label: "Restarting", dot: "bg-primary", text: "text-primary", pulse: true },
 };
+
+// Label & kelas badge health — dipakai kotak Current Operator (pola CorePage).
+const HEALTH_BADGE_LABEL = { healthy: "ONLINE", degraded: "DEGRADED", down: "OFFLINE" };
+const HEALTH_BADGE_CLASS = {
+  healthy: "bg-secondary-container text-on-secondary-container",
+  degraded: "bg-tertiary-container text-on-tertiary-container",
+  down: "bg-error-container text-on-error-container",
+};
+
+// Status agregat satu domain RAN — logika sama dengan CorePage.jsx:
+// satu komponen down -> domain down, ada yang degraded -> degraded,
+// selain itu healthy.
+function domainHealth(components) {
+  if (!components?.length) return "down";
+  if (components.some((c) => c.status === "down")) return "down";
+  if (components.some((c) => c.status === "degraded")) return "degraded";
+  return "healthy";
+}
 
 function formatUptime(seconds) {
   if (!seconds || seconds < 0) return "-";
@@ -87,6 +106,30 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
   const activeMeta = providers.find((p) => p.key === activeProvider);
   const displayedComponents = isDefaultProvider ? components : (providerComponents || []);
 
+  // Current Operator RAN — provider yang benar-benar sedang jalan
+  // (healthy/degraded), pola sama dengan CorePage:
+  //   • Default provider: health dari WebSocket `components` (real-time).
+  //   • Provider lain: health dari providerHealthMap (fetch saat mount);
+  //     RanPage tidak memelihara map itu, jadi cukup dari `components`.
+  const currentOperator = useMemo(() => {
+    if (!providers.length) return null;
+    const defaultKey = providers[0].key;
+    const allHealth = { [defaultKey]: domainHealth(components) };
+    const running =
+      providers.find((p) => allHealth[p.key] === "healthy") ||
+      providers.find((p) => allHealth[p.key] === "degraded");
+    if (!running) return null;
+    return { ...running, health: allHealth[running.key] };
+  }, [providers, components]);
+
+  // Judul + subtitle halaman dirender sticky TopBar lewat PageHeaderContext
+  // (revisi owner t_6c29abe5). Slot right null: operator box ada di body.
+  usePageHeader({
+    title: "Radio Access Network Monitoring and configure gNodeB instances across distributed sites",
+    subtitle: "",
+    right: null,
+  });
+
   // "Hero" node = gNB-1, mewakili node gNB utama yang ditonjolkan di card.
   const hero = displayedComponents.find((c) => c.id === "gnb-1") || displayedComponents[0];
 
@@ -135,45 +178,65 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
 
   return (
     <div className="max-w-[1600px] mx-auto">
-      {/* Page Header */}
-      <div className="mb-8">
-        <h2 className="font-headline-lg text-headline-lg text-on-surface tracking-tight">Radio Access Network</h2>
-        <p className="text-on-surface-variant mt-1">Monitor and configure gNodeB instances across distributed sites.</p>
-      </div>
+      {/* Baris atas: provider tabs (kiri) + kotak Current Operator (kanan).
+          Judul halaman pindah ke sticky TopBar via usePageHeader (revisi
+          owner t_6c29abe5) — body tidak merender judul lokal lagi. */}
+      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-8">
+        {/* Provider Selector Tabs — same card-button style as CorePage */}
+        <div className="flex flex-wrap gap-4">
+          {providers.map((p) => {
+            const active = p.key === activeProvider;
+            // Tab yang provider-nya di-set AKTIF dapat badge + border khusus
+            const isActiveProvider = p.key === activatedKey;
+            return (
+              <button
+                key={p.key}
+                onClick={() => setActiveProvider(p.key)}
+                className={`relative flex items-center gap-3 px-6 py-4 rounded-xl border-2 transition-all duration-200 glass-card ${
+                  isActiveProvider
+                    ? "border-secondary shadow-md"
+                    : active
+                      ? "border-primary text-primary shadow-md"
+                      : "border-transparent text-on-surface-variant hover:bg-surface-container"
+                }`}
+              >
+                <span className="material-symbols-outlined">{p.icon}</span>
+                <div className="text-left">
+                  <p className="text-xs uppercase tracking-widest font-bold opacity-70">Provider</p>
+                  <p className="font-bold flex items-center gap-2">
+                    {p.label}
+                    {isActiveProvider && (
+                      <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-secondary-container text-on-secondary-container animate-pulse">
+                        ● ACTIVE
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
 
-      {/* Provider Selector Tabs — same card-button style as CorePage */}
-      <div className="flex flex-wrap gap-4 mb-8">
-        {providers.map((p) => {
-          const active = p.key === activeProvider;
-          // Tab yang provider-nya di-set AKTIF dapat badge + border khusus
-          const isActiveProvider = p.key === activatedKey;
-          return (
-            <button
-              key={p.key}
-              onClick={() => setActiveProvider(p.key)}
-              className={`relative flex items-center gap-3 px-6 py-4 rounded-xl border-2 transition-all duration-200 glass-card ${
-                isActiveProvider
-                  ? "border-secondary shadow-md"
-                  : active
-                    ? "border-primary text-primary shadow-md"
-                    : "border-transparent text-on-surface-variant hover:bg-surface-container"
-              }`}
-            >
-              <span className="material-symbols-outlined">{p.icon}</span>
-              <div className="text-left">
-                <p className="text-xs uppercase tracking-widest font-bold opacity-70">Provider</p>
-                <p className="font-bold flex items-center gap-2">
-                  {p.label}
-                  {isActiveProvider && (
-                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-secondary-container text-on-secondary-container animate-pulse">
-                      ● ACTIVE
-                    </span>
-                  )}
-                </p>
-              </div>
-            </button>
-          );
-        })}
+        {/* Current Operator — provider yang BENAR-BENAR sedang jalan
+            (bukan sekadar tab yang diklik), bergaya serupa CorePage */}
+        <div className="shrink-0 glass-card border border-outline-variant rounded-2xl px-5 py-3 shadow-sm flex items-center gap-3 self-start">
+          <span className="material-symbols-outlined text-primary text-xl">
+            {currentOperator?.icon || "cloud_off"}
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Current Operator</p>
+            <p className="font-bold text-sm text-on-surface">
+              {currentOperator?.label ?? "None"}
+            </p>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+              currentOperator
+                ? HEALTH_BADGE_CLASS[currentOperator.health]
+                : "bg-surface-container text-on-surface-variant"
+            }`}>
+              ● {currentOperator ? HEALTH_BADGE_LABEL[currentOperator.health] : "NO ACTIVE PROVIDER"}
+            </span>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-12 gap-6">

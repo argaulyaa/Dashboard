@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
+import { usePageHeader } from "../components/PageHeaderContext.jsx";
 
 const STATUS_DOT = {
   healthy: "text-secondary",
@@ -179,20 +180,60 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
     }
   };
 
+  // Judul + subtitle halaman dirender sticky TopBar lewat PageHeaderContext
+  // (revisi owner t_6c29abe5) — body tidak merender judul lokal lagi.
+  // Slot right sengaja null: Current Operator ada di body sejajar tabs.
+  usePageHeader({
+    title: "Core Network Management",
+    subtitle: "Configure and monitor 5G Core Network functions across multiple providers.",
+    right: null,
+  });
+
   return (
     <div className="max-w-[1400px] mx-auto">
-      {/* Page Header */}
-      <div className="mb-8 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-headline-md font-headline-md text-on-surface mb-2">Core Network Management</h2>
-          <p className="text-on-surface-variant">
-            Configure and monitor 5G Core Network functions across multiple providers.
-          </p>
+      {/* Baris atas: provider tabs (kiri) + kotak Current Operator (kanan).
+          Revisi owner t_6c29abe5: judul halaman pindah ke sticky TopBar
+          (via usePageHeader), kotak operator pindah ke sini sejajar tabs. */}
+      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-8">
+        {/* Provider Selector Tabs -- dirender dari data backend, jumlah tab
+            mengikuti berapa provider yang benar-benar terdaftar */}
+        <div className="flex flex-wrap gap-4">
+          {providers.map((p) => {
+            const active = p.key === activeProvider;
+            // Tab yang provider-nya di-set AKTIF dapat badge + border khusus
+            const isActiveProvider = p.key === activatedKey;
+            return (
+              <button
+                key={p.key}
+                onClick={() => setActiveProvider(p.key)}
+                className={`relative flex items-center gap-3 px-6 py-4 rounded-xl border-2 transition-all duration-200 glass-card ${
+                  isActiveProvider
+                    ? "border-secondary shadow-md"
+                    : active
+                      ? "border-primary text-primary shadow-md"
+                      : "border-transparent text-on-surface-variant hover:bg-surface-container"
+                }`}
+              >
+                <span className="material-symbols-outlined">{p.icon}</span>
+                <div className="text-left">
+                  <p className="text-xs uppercase tracking-widest font-bold opacity-70">Provider</p>
+                  <p className="font-bold flex items-center gap-2">
+                    {p.label}
+                    {isActiveProvider && (
+                      <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-secondary-container text-on-secondary-container animate-pulse">
+                        ● ACTIVE
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </button>
+            );
+          })}
         </div>
 
-        {/* Current Operator Badge — pojok kanan atas, menunjukkan provider
-            yang BENAR-BENAR sedang jalan (bukan sekadar tab yang diklik) */}
-        <div className="shrink-0 glass-card border border-outline-variant rounded-2xl px-5 py-3 shadow-sm flex items-center gap-3">
+        {/* Current Operator — provider yang BENAR-BENAR sedang jalan
+            (bukan sekadar tab yang diklik) */}
+        <div className="shrink-0 glass-card border border-outline-variant rounded-2xl px-5 py-3 shadow-sm flex items-center gap-3 self-start">
           <span className="material-symbols-outlined text-primary text-xl">
             {currentOperator?.icon || "cloud_off"}
           </span>
@@ -210,42 +251,6 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
             </span>
           </div>
         </div>
-      </div>
-
-      {/* Provider Selector Tabs -- dirender dari data backend, jumlah tab
-          mengikuti berapa provider yang benar-benar terdaftar */}
-      <div className="flex flex-wrap gap-4 mb-8">
-        {providers.map((p) => {
-          const active = p.key === activeProvider;
-          // Tab yang provider-nya di-set AKTIF dapat badge + border khusus
-          const isActiveProvider = p.key === activatedKey;
-          return (
-            <button
-              key={p.key}
-              onClick={() => setActiveProvider(p.key)}
-              className={`relative flex items-center gap-3 px-6 py-4 rounded-xl border-2 transition-all duration-200 glass-card ${
-                isActiveProvider
-                  ? "border-secondary shadow-md"
-                  : active
-                    ? "border-primary text-primary shadow-md"
-                    : "border-transparent text-on-surface-variant hover:bg-surface-container"
-              }`}
-            >
-              <span className="material-symbols-outlined">{p.icon}</span>
-              <div className="text-left">
-                <p className="text-xs uppercase tracking-widest font-bold opacity-70">Provider</p>
-                <p className="font-bold flex items-center gap-2">
-                  {p.label}
-                  {isActiveProvider && (
-                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-secondary-container text-on-secondary-container animate-pulse">
-                      ● ACTIVE
-                    </span>
-                  )}
-                </p>
-              </div>
-            </button>
-          );
-        })}
       </div>
 
       {/* Bento Grid Dashboard */}

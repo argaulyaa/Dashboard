@@ -2,8 +2,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { fetchProviders, fetchComponents } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
-
-
+import { usePageHeader } from "../components/PageHeaderContext.jsx";
 
 // Data referensi Service Model E2 -- ini spesifikasi standar O-RAN, bukan
 // telemetry per-instance, jadi wajar tetap statis sampai ada endpoint nyata
@@ -116,18 +115,26 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
     }
   };
 
+  // Judul "RIC Management" + subtitle dirender sticky TopBar lewat
+  // PageHeaderContext (revisi owner t_6c29abe5). Body tidak merender judul
+  // duplikat; RIC sengaja TANPA kotak Current Operator.
+  usePageHeader({
+    title: "RIC Management",
+    subtitle: "RAN Intelligent Controller configuration",
+    right: null,
+  });
+
   return (
     <div className="max-w-[1600px] mx-auto">
-      {/* Page Header + provider tabs */}
-      <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h2 className="text-headline-md font-headline-md text-on-surface mb-2">RIC Management</h2>
-          <p className="text-on-surface-variant">
-            RAN Intelligent Controller configuration and xApp orchestration
-          </p>
-        </div>
-        {/* Provider tabs — dirender hanya jika ada lebih dari 1 provider */}
-        {providers.length > 1 && (
+      {/* Judul "RIC Management" + subtitle kini dirender sticky TopBar lewat
+          usePageHeader() (dipanggil sebelum return di atas) — body tidak
+          merender judul duplikat lagi (revisi owner t_6c29abe5).
+          Switcher provider dipertahankan agar fungsi ganti provider tidak
+          hilang, tapi hanya tampil bila provider > 1; kondisi sekarang
+          (satu provider FlexRIC) body bersih tanpa header lokal.
+          RIC sengaja TANPA kotak Current Operator. */}
+      {providers.length > 1 && (
+        <div className="mb-8 flex justify-end">
           <div className="flex p-1 bg-surface-container-high rounded-xl w-fit">
             {providers.map((p) => (
               <button
@@ -143,8 +150,8 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
               </button>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Content: placeholder if not default, bento grid if default */}
       {activeProvider && !isDefaultProvider ? (
