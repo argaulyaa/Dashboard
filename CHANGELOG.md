@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-08-25 - Revisi: TopBar sticky title-only, Current Operator pindah ke body sejajar provider tabs
+
+### Keputusan Owner (revisi atas entri di bawah)
+TopBar sticky kembali HANYA menampilkan judul per-page (Core/RAN juga dapat
+subtitle). Badge Current Operator TIDAK lagi ada di TopBar — kotak operator
+pindah ke body halaman Core & RAN, sejajar dengan provider tabs. RIC sengaja
+tanpa kotak operator. Implementasi oleh worker paralel (hermes-bill, commit
+60b7334), diverifikasi independen oleh Dev.
+
+### Perubahan (`frontend/`, commit 60b7334)
+- `components/PageHeaderContext.jsx` (BARU): context `PageHeaderProvider` +
+  hook `usePageHeader({title, subtitle, right})` — page aktif mengisi isi
+  header sticky; mode tanpa argumen = GET (dipakai TopBar).
+- `App.jsx`: `<Routes>` dibungkus `PageHeaderProvider`.
+- `components/TopBar.jsx` (rewrite): sticky title-only — judul + subtitle dari
+  `usePageHeader()`, fallback map PAGE_TITLES untuk page yang tidak set
+  header. Slot kanan/operator badge DIHAPUS.
+- `pages/CorePage.jsx`: judul h2 lokal + strip lama dihapus;
+  `usePageHeader({title, subtitle, right:null})`; baris atas body =
+  wrapper flex (kiri provider tabs, kanan kotak Current Operator dengan
+  HEALTH_BADGE fallback "NO ACTIVE PROVIDER"); logika `currentOperator`
+  (useMemo) tidak berubah.
+- `pages/RanPage.jsx`: block judul lokal dihapus; TAMBAHAN state
+  `currentOperator` RAN baru (useMemo domainHealth dari WebSocket
+  components); kotak operator disisipkan sejajar tabs pola sama dgn Core.
+- `pages/RicPage.jsx`: judul lokal duplikat dihapus via usePageHeader
+  ("RIC Management" + subtitle), tanpa kotak operator.
+
+### Verifikasi Dev (independen)
+- Diff 60b7334 sesuai brief owner poin 1–5 (title-only sticky, operator di
+  body sejajar tabs Core+RAN, RAN state baru, RIC bersih).
+- `npm run build` (vite) di clone bersih @60b7334: exit 0, built 2.54s.
+
 ## 2026-08-25 - TopBar sticky: judul per-page + Current Operator, CorePage strip di-revert
 
 ### Keputusan Owner
