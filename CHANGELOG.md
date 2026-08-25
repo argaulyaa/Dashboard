@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-25 - TopBar dibersihkan: search, telemetry, notifikasi, bantuan dihapus
+
+### Keputusan Owner
+Empat elemen di baris paling atas halaman (top bar) dihapus dari SEMUA page.
+
+### Perubahan
+- `frontend/src/components/TopBar.jsx`:
+  - Hapus input search (`placeholder="Search infrastructure..."`) beserta wrapper div-nya.
+  - Hapus indikator `Telemetry live / Connecting... / Disconnected` beserta
+    konstanta `WS_LABEL` dan `WS_DOT` (kini unused).
+  - Hapus tombol ikon `notifications` (bel) dan `help_outline` (tanda tanya).
+  - Prop `wsStatus` dihapus dari signature; header kanan kini kosong total
+    (tidak ada elemen lain di file ini yang layak dipertahankan).
+- `App.jsx` TIDAK diubah: tetap mengirim `wsStatus={wsStatus}` ke `<TopBar/>`;
+  React mengabaikan prop tak terpakai sehingga aman tanpa edit pemanggil.
+- Sidebar, page lain, dan logika lain tidak tersentuh.
+
+### Verifikasi
+- `npm run build` (vite v5.4.21): sukses, 66 modules transformed, exit 0.
+- Commit `ff46822` pushed ke `main`.
+
 ## 2026-08-24 - RBAC disederhanakan: 2 role (admin + user), audit log admin-only
 
 ### Keputusan Owner
