@@ -50,16 +50,28 @@ export function usePageHeader(config) {
   const header = useContext(PageHeaderStateContext);
   const setPageHeader = useContext(PageHeaderSetContext);
 
-  // Mode SET: dipanggil dengan objek config ({ title, subtitle, right }).
-  // Sengaja TANPA dep array: tiap render page mengirim ulang config terbaru,
-  // jadi elemen dinamis di slot kanan (mis. kotak Current Operator dengan
-  // telemetry live) selalu versi termutakhir di TopBar. Cleanup mengosongkan
-  // header saat page unmount (route pindah -> TopBar tidak bawa header lama).
+  // Mode SET dipanggil dengan objek config ({ title, subtitle, right }).
+  //
+  // PENTING (fix regresi blank-page): JANGAN panggil setPageHeader tiap
+  // render dengan objek baru (efek tanpa dependency array). Objek config
+  // literal baru tiap render + efek tanpa dep = setState tiap commit ->
+  // "Maximum update depth exceeded" -> React berhenti memproses transisi
+  // router -> halaman beku/blank diam-diam di build produksi.
+  //
+  // Solusi: jadikan FIELD config yang stabil sebagai dependency effect,
+  // bukan objeknya. Efek hanya jalan saat isi header benar-benar berubah,
+  // saat mount, atau saat unmount (cleanup mengosongkan header supaya
+  // route berikutnya tidak membawa header lama). Identitas setPageHeader
+  // stabil (useCallback []), jadi aman jadi dependency.
+  const title = config === undefined ? undefined : (config.title ?? "");
+  const subtitle = config === undefined ? undefined : (config.subtitle ?? "");
+  const right = config === undefined ? undefined : (config.right ?? null);
+
   useEffect(() => {
-    if (config === undefined) return undefined;
-    setPageHeader(config);
+    if (config === undefined) return undefined; // mode GET: no-op
+    setPageHeader({ title, subtitle, right });
     return () => setPageHeader(null);
-  });
+  }, [setPageHeader, title, subtitle, right]);
 
   // Mode GET: tanpa argumen, kembalikan header aktif (dipakai TopBar).
   if (config === undefined) return header;

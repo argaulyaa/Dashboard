@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, Navigate, useLocation } from "react-router-d
 import Sidebar from "./components/Sidebar.jsx";
 import TopBar from "./components/TopBar.jsx";
 import { PageHeaderProvider } from "./components/PageHeaderContext.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
 import MobileNav from "./components/MobileNav.jsx";
 import ControlDrawer from "./components/ControlDrawer.jsx";
 import Overview from "./pages/Overview.jsx";
@@ -147,7 +148,12 @@ const handleLogout = useCallback(() => {
           onUserChange={setCurrentUser}
           onLogout={handleLogout}
         />
-        <TopBar wsStatus={wsStatus} />
+        {/* TopBar HARUS di dalam PageHeaderProvider: dia baca header via
+            usePageHeader() mode GET. Di luar provider, context-nya kosong dan
+            judul sticky tidak pernah terisi. */}
+        <PageHeaderProvider>
+          <TopBar wsStatus={wsStatus} />
+        </PageHeaderProvider>
         <MobileNav />
 
         {/* TopBar kini sticky in-flow (bukan fixed), jadi <main> tidak butuh
@@ -157,10 +163,12 @@ const handleLogout = useCallback(() => {
           <div className="text-error font-mono text-[13px] mb-4">Failed to load data: {error}</div>
           )}
 
-          {/* PageHeaderProvider: page aktif set judul/subtitle via usePageHeader(),
-              TopBar sticky membacanya. Membungkus seluruh <Routes>. */}
-          <PageHeaderProvider>
-          <Routes>
+          {/* ErrorBoundary level-route: satu page yang throw tidak boleh
+              membunuh seluruh app (white-screen diam-diam). Panel error
+              ditampilkan di dalam <main>, navigasi sidebar tetap hidup. */}
+          <ErrorBoundary>
+            <PageHeaderProvider>
+            <Routes>
             <Route
               path="/"
               element={
@@ -255,6 +263,7 @@ const handleLogout = useCallback(() => {
             />
           </Routes>
           </PageHeaderProvider>
+          </ErrorBoundary>
         </main>
 
         {selected && (

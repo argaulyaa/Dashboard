@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026-08-25 - Hotfix: 5 route blank/frozen (Maximum update depth exceeded) + TopBar keluar provider + ErrorBoundary
+
+### Gejala (laporan user via Bill)
+Dashboard terasa lag; klik Overview & Core jalan, tapi klik RAN / RIC /
+Reservation / Audit Logs / Profile sering tidak pindah halaman — layar
+beku di konten sebelumnya atau blank; judul sticky kadang kosong.
+
+### Root cause (diverifikasi headless Chromium, dev + prod bundle)
+1. `usePageHeader()` mode SET memakai `useEffect` TANPA dependency array
+   sambil page mengirim objek config BARU tiap render. Setiap commit ->
+   `setPageHeader(config)` -> state provider berubah -> render lagi ->
+   effect jalan lagi: loop update tak berujung. Loop ini engage saat ada
+   pemicu re-render eksternal (WebSocket telemetry tiap 3 detik), lalu
+   React berhenti di batas "Maximum update depth exceeded" dan TIDAK
+   lagi memproses transisi router (React Router v7 pakai startTransition,
+   prioritas rendah) — akibatnya hash/URL berubah tapi UI beku diam-diam.
+   Di build produksi warning dev-nya di-strip, jadi tampak seperti bug
+   "acak" tanpa jejak console.
+2. `<TopBar>` dirender DI LUAR `<PageHeaderProvider>` (App.jsx L150 vs
+   L162) — `usePageHeader()` mode GET membaca context default kosong,
+   jadi judul sticky tidak pernah terisi dari page.
+
+### Perbaikan
+- `components/PageHeaderContext.jsx`: efek mode SET kini punya dependency
+  array `[setPageHeader, title, subtitle, right]` (field stabil, bukan
+  objek). Set/cleanup hanya jalan saat isi header benar-benar berubah,
+  mount, atau unmount. Tidak ada setState per-render lagi.
+- `App.jsx`: `<TopBar>` dipindah ke dalam `PageHeaderProvider` (provider
+  kecil khusus TopBar); `<Routes>` tetap dibungkus provider sendiri;
+  ditambah `ErrorBoundary` class component membungkus `<Routes>` supaya
+  satu page yang throw tidak mematikan seluruh app (tampil panel error,
+  sidebar tetap hidup).
+- `components/ErrorBoundary.jsx` (BARU): error boundary level-route.
+
+### Verifikasi
+- Dev server (error React kelihatan): SEBELUM fix -> "Maximum update
+  depth exceeded" bertubi-tubi dari RanPage begitu WS live, navigasi
+  beku. SESUDAH fix -> nol loop warning, semua route render.
+- Prod bundle + backend live (alur user: login admin -> klik semua nav):
+  7/7 route render, judul TopBar benar per-page, nol runtime error.
+- Prod bundle tanpa backend: 7/7 route render (degradasi rapi, hanya
+  banner "Failed to load data").
+- `npm run build` exit 0 (bundle index-omisKThv.js).
+
 ## 2026-08-25 - Revisi: TopBar sticky title-only, Current Operator pindah ke body sejajar provider tabs
 
 ### Keputusan Owner (revisi atas entri di bawah)
