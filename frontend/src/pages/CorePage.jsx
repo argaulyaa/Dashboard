@@ -180,9 +180,10 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
   };
 
   return (
-    <div className="max-w-[1400px] mx-auto">
-      {/* Page Header */}
-      <div className="mb-8 flex items-start justify-between gap-4">
+    <>
+      {/* Page Header Strip — full-width di paling atas konten halaman,
+          menggantikan posisi visual TopBar global yang sudah dikosongkan */}
+      <div className="relative z-10 bg-surface-bright border-b border-outline-variant px-gutter py-4 flex items-center justify-between gap-4">
         <div>
           <h2 className="text-headline-md font-headline-md text-on-surface mb-2">Core Network Management</h2>
           <p className="text-on-surface-variant">
@@ -211,6 +212,8 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
           </div>
         </div>
       </div>
+
+      <div className="max-w-[1400px] mx-auto">
 
       {/* Provider Selector Tabs -- dirender dari data backend, jumlah tab
           mengikuti berapa provider yang benar-benar terdaftar */}
@@ -450,6 +453,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
           </table>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
