@@ -86,10 +86,18 @@ jobs:
           if [ -f /home/github-runner/oran-smtp-values.yaml ]; then
             SMTP_ARGS='-f /home/github-runner/oran-smtp-values.yaml'
           fi
+          # Runner-local K8s adapter values (kredensial SSH node master untuk
+          # provider 'k8s' fase 1 read-only). File TIDAK di git — pola sama
+          # dengan SMTP values di atas. Tanpa file ini provider k8s jatuh ke mock.
+          K8S_ARGS=''
+          if [ -f /home/github-runner/oran-k8s-values.yaml ]; then
+            K8S_ARGS='-f /home/github-runner/oran-k8s-values.yaml'
+          fi
           helm upgrade --install ${{ env.HELM_RELEASE }} ./deploy/helm/oran-dashboard \
             --namespace ${{ env.NAMESPACE }} \
             --create-namespace \
             $SMTP_ARGS \
+            $K8S_ARGS \
             --set backend.image.tag=${{ github.sha }} \
             --set frontend.image.tag=${{ github.sha }} \
             --timeout 180s \
