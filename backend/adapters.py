@@ -1500,7 +1500,7 @@ def _build_core_providers() -> dict:
         k8s_desc = "OAI 5G Core di Kubernetes (mock — K8S_SSH_HOST belum diset)"
     providers["k8s"] = {
         "label": "OAI K8s",
-        "icon": "kubernetes",
+        "icon": "device_hub",  # glyph 'kubernetes' tidak ada di Material Symbols
         "desc": k8s_desc,
         "adapter": adapter_k8s,
     }
