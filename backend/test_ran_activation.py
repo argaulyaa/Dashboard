@@ -4,7 +4,8 @@ Cakupan:
   (1) GET /api/ran/active-provider awal -> null.
   (2) Activate 'srsran' -> active=srsran.
   (3) Activate 'srsran' lagi (idempotent).
-  (4) Upsert ke 'oai' -> active=oai (eksklusif antar provider RAN, single row).
+  (4) Switch ke 'oai' saat srsran aktif -> 409 provider_active (B1);
+      setelah deactivate -> activate oai sukses.
   (5) Hanya ada 1 row active_providers untuk domain ran.
   (6) Domain core INDEPENDEN: activate core gak mengganggu ran.
   (7) Deactivate ran -> null; core tetap aktif.
@@ -42,12 +43,20 @@ r = client.post("/api/ran/activate-provider", headers=H, json={"provider": "srsr
 assert r.status_code == 200, r.text
 print("PASS (3): re-activate srsran idempotent")
 
-# (4) switch ke oai -> eksklusif, oai menggantikan srsran
+# (4) switch ke oai saat srsran aktif -> 409 provider_active (B1 server-side);
+#     setelah deactivate -> switch sukses.
+r = client.post("/api/ran/activate-provider", headers=H, json={"provider": "oai"})
+assert r.status_code == 409, f"expected 409, got {r.status_code}: {r.text}"
+d = r.json()["detail"]
+assert d["reason"] == "provider_active" and d["active"] == "srsran", d
+print("PASS (4a): activate oai saat srsran aktif -> 409 provider_active")
+r = client.post("/api/ran/deactivate-provider", headers=H)
+assert r.status_code == 200, r.text
 r = client.post("/api/ran/activate-provider", headers=H, json={"provider": "oai"})
 assert r.status_code == 200 and r.json()["provider"] == "oai", r.text
 g = client.get("/api/ran/active-provider", headers=H).json()
 assert g["provider"] == "oai", g
-print("PASS (4): activate oai -> ran active=oai (srsran tergantikan)")
+print("PASS (4b): deactivate -> activate oai -> ran active=oai")
 
 # (5) cuma 1 row utk domain ran
 with auth.get_db_session() as db:

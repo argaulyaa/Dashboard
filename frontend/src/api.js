@@ -180,12 +180,45 @@ export function openTelemetrySocket(onSnapshot) {
   const ws = new WebSocket(`${proto}://${host}/ws/telemetry${qs}`);
   ws.onmessage = (evt) => {
     try {
-      onSnapshot(JSON.parse(evt.data));
+      onSnapshot(normalizeSnapshot(JSON.parse(evt.data)));
     } catch (e) {
       console.error("Bad telemetry payload", e);
     }
   };
   return ws;
+}
+
+// ---- Normalisasi snapshot WS (F1 plan exclusive-core-ran) ----
+// Payload v2 dari backend: {meta:{ts,active,bindings}, domains:{core:[...]}}
+// Payload v1 lama (backend versi sebelum deploy): {core:[...], ran:[...]}.
+// normalizeSnapshot menerima KEDUANYA dan selalu mengembalikan bentuk yang
+// sama utk state App.jsx — aman urutan deploy backend/frontend.
+export function normalizeSnapshot(payload) {
+  if (!payload || typeof payload !== "object") {
+    return { data: { core: [], ran: [], ric: [] }, meta: null };
+  }
+  if (payload.domains && typeof payload.domains === "object") {
+    return {
+      data: {
+        core: payload.domains.core || [],
+        ran: payload.domains.ran || [],
+        ric: payload.domains.ric || [],
+      },
+      meta: payload.meta || null,
+    };
+  }
+  // v1: snapshot = {domain: [components]} tanpa meta
+  const { core, ran, ric } = payload;
+  return {
+    data: { core: core || [], ran: ran || [], ric: ric || [] },
+    meta: null,
+  };
+}
+
+// Label ramah utk key provider (fallback kalau daftar provider belum ke-load)
+export function providerLabel(key) {
+  const LABELS = { oai: "OAI", open5gs: "open5gs", magma: "Magma", srsran: "srsRAN" };
+  return LABELS[key] || key || "-";
 }
 
 // ---- Forgot credentials: password reset via email OTP ----

@@ -66,17 +66,28 @@ def test_b_activate_oai():
     print(f"PASS (b): activate oai -> active=oai (oleh {g['username']}, t={g['activated_at']:.0f})")
 
 
-def test_c_switch_to_open5gs_upsert():
+def test_c_switch_to_open5gs_blocked_409():
+    """B1 (Fase 1): eksklusif ditégakkan server-side — activate provider
+    lain saat 'oai' aktif harus 409 provider_active (bukan upsert diam-diam)."""
     r = client.post("/api/core/activate-provider", headers=ADMIN, json={"provider": "open5gs"})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 409, f"expected 409, got {r.status_code}: {r.text}"
+    d = r.json()["detail"]
+    assert d["reason"] == "provider_active" and d["active"] == "oai", d
     g = client.get("/api/core/active-provider", headers=ADMIN).json()
-    # Backend sengaja simple upsert (spesifikasi owner); UI yang disable tombol
-    # provider lain supaya switch ini gak pernah terjadi dari UI.
-    assert g["provider"] == "open5gs", g
+    assert g["provider"] == "oai", g
     with auth.get_db_session() as db:
         rows = db.query(main.ActiveProviderModel).filter_by(domain="core").all()
-    assert len(rows) == 1, f"upsert harus tetap 1 row, dapat {len(rows)}"
-    print("PASS (c): activate open5gs -> upsert single-row, active=open5gs")
+    assert len(rows) == 1, f"harus tetap 1 row (oai), dapat {len(rows)}"
+    print("PASS (c): activate open5gs saat oai aktif -> 409 provider_active; active tetap oai")
+
+
+def test_c2_deactivate_then_switch_ok():
+    """Alur eksklusif terpandu UI: deactivate dulu -> switch boleh."""
+    r = client.post("/api/core/deactivate-provider", headers=ADMIN)
+    assert r.status_code == 200, r.text
+    r = client.post("/api/core/activate-provider", headers=ADMIN, json={"provider": "open5gs"})
+    assert r.status_code == 200 and r.json()["provider"] == "open5gs", r.text
+    print("PASS (c2): deactivate -> switch ke open5gs sukses (alur terpandu)")
 
 
 def test_d_invalid_provider_400():
@@ -86,14 +97,10 @@ def test_d_invalid_provider_400():
 
 
 def test_e_viewer_forbidden_but_can_read():
-    """RBAC 2-role: role 'user' adalah operator penuh — activate diizinkan."""
-    r = client.post("/api/core/activate-provider", headers=USER, json={"provider": "magma"})
-    assert r.status_code == 200, f"expected 200, got {r.status_code}: {r.text}"
-    assert r.json()["username"] == "budiview", r.json()
-    # User tetap boleh LIHAT status; aktivasi magma sukses menggantikan open5gs
-    g = client.get("/api/core/active-provider", headers=USER)
-    assert g.status_code == 200 and g.json()["provider"] == "magma", g.text
-    print("PASS (e): user biasa activate -> 200 (setara engineer lama); GET status 200")
+    """RBAC 2-role + B1: role 'user' adalah operator penuh, tapi eksklusifitas
+    server-side tetap berlaku — activate provider lain saat ada yang aktif
+    tetap ditolak 409 (lihat __main__: e menguji 409, e2 menguji sukses)."""
+    pass
 
 
 def test_f_deactivate_and_double():
@@ -114,20 +121,31 @@ def test_g_audit_logged():
             .filter(main.AuditLogModel.action.in_(["PROVIDER_ACTIVATE", "PROVIDER_DEACTIVATE"]))
             .all()
         ]
-    # 3 activate sukses (oai, open5gs oleh admin; magma oleh user biasa).
-    # Deactivate sukses 1x.
+    # Activate sukses: oai (b), open5gs (c2), magma oleh user biasa (e2).
+    # Deactivate sukses: di c2 (sebelum switch open5gs), di alur e2
+    # (sebelum magma), dan di test_f = 3x.
     assert acts.count("PROVIDER_ACTIVATE") == 3, acts
-    assert acts.count("PROVIDER_DEACTIVATE") == 1, acts
+    assert acts.count("PROVIDER_DEACTIVATE") == 3, acts
     print(f"PASS (g): audit log OK ({acts})")
 
 
 if __name__ == "__main__":
-    # Perbaiki ekspektasi test_g: hanya 2 PROVIDER_ACTIVATE yang sukses (oai, open5gs)
     test_a_initial_null()
     test_b_activate_oai()
-    test_c_switch_to_open5gs_upsert()
+    test_c_switch_to_open5gs_blocked_409()
+    test_c2_deactivate_then_switch_ok()
     test_d_invalid_provider_400()
-    test_e_viewer_forbidden_but_can_read()
+    # test_e: user biasa activate magma -> 409 (open5gs masih aktif dari c2),
+    # lalu alur deactivate -> activate magma sukses.
+    r = client.post("/api/core/activate-provider", headers=USER, json={"provider": "magma"})
+    assert r.status_code == 409, f"expected 409, got {r.status_code}: {r.text}"
+    print("PASS (e): user biasa activate provider lain saat ada yang aktif -> 409")
+    client.post("/api/core/deactivate-provider", headers=USER)
+    r = client.post("/api/core/activate-provider", headers=USER, json={"provider": "magma"})
+    assert r.status_code == 200 and r.json()["username"] == "budiview", r.text
+    g = client.get("/api/core/active-provider", headers=USER)
+    assert g.status_code == 200 and g.json()["provider"] == "magma", g.text
+    print("PASS (e2): setelah deactivate, user biasa activate magma -> 200; GET status 200")
     test_f_deactivate_and_double()
     test_g_audit_logged()
     print("\nALL TESTS PASSED")

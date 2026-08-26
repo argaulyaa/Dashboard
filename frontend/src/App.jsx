@@ -63,7 +63,10 @@ export default function App() {
   const [error, setError] = useState(null);
   const [currentUser, setCurrentUser] = useState(getUser());
   const [opsCount, setOpsCount] = useState(0);
-  const [lastTelemetryAt, setLastTelemetryAt] = useState(null); 
+  const [lastTelemetryAt, setLastTelemetryAt] = useState(null);
+  // Meta WS v2 (meta.active per domain + bindings) — dipakai Core/RanPage
+  // sebagai sumber status aktivasi real-time (fallback REST saat reload).
+  const [telemetryMeta, setTelemetryMeta] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -82,8 +85,11 @@ export default function App() {
 
   useEffect(() => {
   const ws = openTelemetrySocket((snapshot) => {
+    // openTelemetrySocket sudah menormalkan payload v1 & v2 via
+    // normalizeSnapshot() -> bentuk selalu {data:{core,ran,ric}, meta}
     setWsStatus("live");
-    setData(snapshot);
+    setData(snapshot.data);
+    setTelemetryMeta(snapshot.meta);
     setLastTelemetryAt(Date.now());
   });
     ws.onopen = () => setWsStatus("live");
@@ -188,6 +194,7 @@ const handleLogout = useCallback(() => {
       currentUser={currentUser}
       onSelect={(component) => handleSelect("core", component)}
       onRestart={handleRestart}
+      telemetryMeta={telemetryMeta}
     />
   }
 />
@@ -200,6 +207,7 @@ const handleLogout = useCallback(() => {
                   currentUser={currentUser}
                   onSelect={(component) => handleSelect("ran", component)}
                   onRestart={handleRestart}
+                  telemetryMeta={telemetryMeta}
                 />
               }
             />

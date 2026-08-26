@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from "react";
-import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider } from "../api.js";
+import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider, providerLabel } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
 import { usePageHeader } from "../components/PageHeaderContext.jsx";
@@ -42,7 +42,7 @@ function formatUptime(seconds) {
   return `${d}d ${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m`;
 }
 
-export default function CorePage({ components, currentUser, onSelect, onRestart }) {
+export default function CorePage({ components, currentUser, onSelect, onRestart, telemetryMeta }) {
   // Daftar provider datang dari backend (GET /api/core/providers), bukan
   // ditulis manual di sini. Kalau backend nambah provider baru, tab baru
   // otomatis muncul tanpa file ini disentuh lagi.
@@ -100,6 +100,81 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
       .catch(() => setProviderComponents([]));
   }, [activeProvider, isDefaultProvider]);
 
+  // ---- F2: status aktivasi real-time dari meta WS (payload v2) ----
+  // meta.active.core = provider yang di-set aktif (bookkeeping DB backend).
+  // Sumber kebenaran utama = WS; REST getActiveProvider cuma fallback awal.
+  const wsActiveCore = telemetryMeta?.active?.core ?? undefined; // undefined = belum ada data WS
+  useEffect(() => {
+    if (wsActiveCore === undefined) return; // WS belum hidup -> biarkan hasil REST
+    setActiveActivation(
+      wsActiveCore ? { provider: wsActiveCore } : null
+    );
+  }, [wsActiveCore]);
+
+  // Alur eksklusif terpandu: klik Activate saat provider lain aktif ->
+  // dialog konfirmasi "matikan X dulu, lalu nyalakan Y?" (deactivate lalu
+  // activate berurutan). Kalau kalah race antar-user -> 409 dari server,
+  // refetch status + tampilkan pesan dari payload error.
+  const [switchPrompt, setSwitchPrompt] = useState(null); // {fromLabel, toKey}
+
+  const handleToggleActivation = async () => {
+    if (isViewer || !activeProvider) return;
+    if (activatedKey != null && !isActiveTab) {
+      // Provider lain sedang aktif -> minta konfirmasi switch (server akan
+      // menolak langsung dengan 409 kalau kita paksa, jadi alurnya terpandu).
+      setSwitchPrompt({
+        fromLabel: activatedLabel || activatedKey,
+        toKey: activeProvider,
+      });
+      return;
+    }
+    setActivationBusy(true);
+    try {
+      if (isActiveTab) {
+        await deactivateProvider("core");
+        setActiveActivation(null);
+      } else {
+        const res = await activateProvider("core", activeProvider);
+        setActiveActivation({
+          provider: res.provider,
+          username: res.username,
+          activated_at: res.activated_at,
+        });
+      }
+    } catch (e) {
+      console.error("Provider activation failed", e);
+      const reason = e?.payload?.message || e?.message;
+      if (e?.payload?.reason === "provider_active") {
+        // Race antar user: state lokal basi -> sinkron ulang dari server
+        getActiveProvider("core").then(setActiveActivation).catch(() => {});
+      }
+      if (reason) alert(reason);
+    } finally {
+      setActivationBusy(false);
+    }
+  };
+
+  const confirmSwitchProvider = async () => {
+    if (!switchPrompt) return;
+    const toKey = switchPrompt.toKey;
+    setSwitchPrompt(null);
+    setActivationBusy(true);
+    try {
+      await deactivateProvider("core");
+      await activateProvider("core", toKey);
+      setActiveActivation({ provider: toKey });
+    } catch (e) {
+      console.error("Provider switch failed", e);
+      const reason = e?.payload?.message || e?.message;
+      if (e?.payload?.reason === "provider_active") {
+        getActiveProvider("core").then(setActiveActivation).catch(() => {});
+      }
+      if (reason) alert(reason);
+    } finally {
+      setActivationBusy(false);
+    }
+  };
+
   const activeMeta = providers.find((p) => p.key === activeProvider);
   const displayedComponents = isDefaultProvider ? components : (providerComponents || []);
 
@@ -117,28 +192,6 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
     operator: hero?.reservation?.user || "-",
   };
 
-  // Current Operator — provider yang benar-benar sedang jalan (healthy/degraded),
-  // bukan sekadar tab yang sedang diklik. Cek semua provider:
-  //   • Default provider: health-nya dari WebSocket `components` (real-time).
-  //   • Provider lain: health-nya dari providerHealthMap (fetch saat mount).
-  // Provider pertama yang healthy dipilih; kalau tidak ada, yang degraded.
-  const currentOperator = useMemo(() => {
-    if (!providers.length) return null;
-    const defaultKey = providers[0].key;
-    const defaultHealth = domainHealth(components);
-    const allHealth = {
-      [defaultKey]: defaultHealth,
-      ...providerHealthMap,
-    };
-    const running =
-      providers.find((p) => allHealth[p.key] === "healthy") ||
-      providers.find((p) => allHealth[p.key] === "degraded");
-    if (!running) return null;
-    return { ...running, health: allHealth[running.key] };
-  }, [providers, components, providerHealthMap]);
-
-  const activeCount = displayedComponents.filter((c) => c.status !== "down").length;
-
   // ---- Provider activation state ----
   // RBAC 2-role: user & admin sama-sama operator penuh.
   const isViewer = false;
@@ -148,28 +201,19 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
   const isActiveTab = activatedKey != null && activatedKey === activeProvider;
   const isBusy = activationBusy;
 
-  const handleToggleActivation = async () => {
-    if (isViewer || !activeProvider) return;
-    setActivationBusy(true);
-    try {
-      if (isActiveTab) {
-        await deactivateProvider("core");
-        setActiveActivation(null);
-      } else {
-        const res = await activateProvider("core", activeProvider);
-        setActiveActivation({
-          provider: res.provider,
-          username: res.username,
-          activated_at: res.activated_at,
-        });
-      }
-    } catch (e) {
-      console.error("Provider activation failed", e);
-    } finally {
-      setActivationBusy(false);
-    }
-  };
+  // Current Operator — F2: sumber kebenaran = status AKTIVASI eksplisit
+  // (siapa yang SEHARUSNYA jalan), bukan inferensi health yang bisa salah
+  // kalau dua provider sehat bersamaan. Health tampil sebagai baris kedua
+  // ("LIVE") — health di sini milik provider yang sedang aktif saja.
+  const currentOperator = useMemo(() => {
+    if (!providers.length) return null;
+    if (!activatedKey) return null;
+    const meta = providers.find((p) => p.key === activatedKey);
+    if (!meta) return { key: activatedKey, label: activatedKey, icon: "cloud", health: "down" };
+    return { ...meta, health: domainHealth(displayedComponents) };
+  }, [providers, activatedKey, displayedComponents]);
 
+  const activeCount = displayedComponents.filter((c) => c.status !== "down").length;
 
   const handleRestartRow = async (id) => {
     setRestartingId(id);
@@ -231,8 +275,8 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
           })}
         </div>
 
-        {/* Current Operator — provider yang BENAR-BENAR sedang jalan
-            (bukan sekadar tab yang diklik) */}
+        {/* Current Operator — F2: sumber kebenaran = status aktivasi eksplisit.
+            Dua baris: siapa yang DI-AKTIFKAN + apakah benar-benar hidup (LIVE). */}
         <div className="shrink-0 glass-card border border-outline-variant rounded-2xl px-5 py-3 shadow-sm flex items-center gap-3 self-start">
           <span className="material-symbols-outlined text-primary text-xl">
             {currentOperator?.icon || "cloud_off"}
@@ -242,13 +286,20 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
             <p className="font-bold text-sm text-on-surface">
               {currentOperator?.label ?? "None"}
             </p>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-              currentOperator
-                ? HEALTH_BADGE_CLASS[currentOperator.health]
-                : "bg-surface-container text-on-surface-variant"
-            }`}>
-              ● {currentOperator ? HEALTH_BADGE_LABEL[currentOperator.health] : "NO ACTIVE PROVIDER"}
-            </span>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              {currentOperator && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary-container text-on-primary-container">
+                  ACTIVATED
+                </span>
+              )}
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                currentOperator
+                  ? HEALTH_BADGE_CLASS[currentOperator.health]
+                  : "bg-surface-container text-on-surface-variant"
+              }`}>
+                ● LIVE: {currentOperator ? HEALTH_BADGE_LABEL[currentOperator.health] : "NO ACTIVE PROVIDER"}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -377,6 +428,35 @@ export default function CorePage({ components, currentUser, onSelect, onRestart 
           />
         )}
 
+        {/* Dialog konfirmasi switch eksklusif (F2): matikan provider aktif
+            dulu, baru nyalakan yang diminta. Server-side 409 (B1) tetap
+            jadi pengaman kalau ada race antar user. */}
+        {switchPrompt && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="glass-card border border-outline-variant rounded-2xl p-6 max-w-md w-[92%] shadow-xl">
+              <h4 className="font-bold text-title-md mb-2">Ganti Core Provider?</h4>
+              <p className="text-sm text-on-surface-variant mb-6">
+                «{switchPrompt.fromLabel}» sedang aktif. Matikan dulu, lalu
+                nyalakan «{providerLabel(switchPrompt.toKey)}»?
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  className="px-4 py-2 rounded-lg border border-outline-variant font-bold text-sm hover:bg-surface-container-low"
+                  onClick={() => setSwitchPrompt(null)}
+                >
+                  Batal
+                </button>
+                <button
+                  className="px-4 py-2 rounded-lg bg-error text-on-error font-bold text-sm shadow-md hover:brightness-110 disabled:opacity-50"
+                  onClick={confirmSwitchProvider}
+                  disabled={activationBusy}
+                >
+                  {activationBusy ? "Memproses..." : `Matikan ${switchPrompt.fromLabel} & nyalakan ${providerLabel(switchPrompt.toKey)}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {/* Right Sidebar: Instance Health */}
         <div className="col-span-12 lg:col-span-4 glass-card rounded-2xl p-6 shadow-sm border border-outline-variant">
           <h4 className="text-sm font-bold mb-4">Instance Health</h4>

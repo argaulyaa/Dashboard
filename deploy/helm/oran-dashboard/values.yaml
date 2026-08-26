@@ -44,6 +44,23 @@ backend:
     sshPort: "22"
     sshUser: "ran"
     sshPassword: "telmat123"
+  k8s:
+    # OAI 5G Core di Kubernetes (ns 5g-core) — provider "k8s", READ-ONLY fase 1:
+    # data Deployment dibaca via SSH kubectl ke node master. Restart
+    # dinonaktifkan di fase ini. KEAMANAN: biarkan nilai di bawah KOSONG di
+    # repo/git — host/user/password ASLI diisi SAAT DEPLOY via
+    #   helm upgrade ... --set backend.k8s.sshHost=... \
+    #                    --set backend.k8s.sshPassword=... \
+    #                    --set backend.k8s.sudoPassword=...
+    # atau `kubectl edit secret oran-backend -n dashboard`.
+    # sshHost kosong ("") = provider k8s jatuh ke mock (dashboard tetap jalan).
+    sshHost: ""
+    sshPort: "22"
+    sshUser: ""
+    sshPassword: ""
+    sudoPassword: ""
+    namespace: "5g-core"
+    kubeconfig: "/etc/kubernetes/admin.conf"
 
 auth:
   # Format "user:pass,user2:pass2" (default admin:admin)

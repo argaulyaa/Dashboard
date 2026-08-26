@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider } from "../api.js";
+import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider, providerLabel } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
 import { usePageHeader } from "../components/PageHeaderContext.jsx";
@@ -60,7 +60,7 @@ function CoverageMapArt() {
   );
 }
 
-export default function RanPage({ components, currentUser, onSelect, onRestart }) {
+export default function RanPage({ components, currentUser, onSelect, onRestart, telemetryMeta }) {
   const [providers, setProviders] = useState([]);
   const [activeProvider, setActiveProvider] = useState(null);
   const [providerComponents, setProviderComponents] = useState(null);
@@ -106,21 +106,36 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
   const activeMeta = providers.find((p) => p.key === activeProvider);
   const displayedComponents = isDefaultProvider ? components : (providerComponents || []);
 
-  // Current Operator RAN — provider yang benar-benar sedang jalan
-  // (healthy/degraded), pola sama dengan CorePage:
-  //   • Default provider: health dari WebSocket `components` (real-time).
-  //   • Provider lain: health dari providerHealthMap (fetch saat mount);
-  //     RanPage tidak memelihara map itu, jadi cukup dari `components`.
+  // ---- F3: status aktivasi real-time dari meta WS (payload v2) ----
+  // meta.active.ran = provider RAN yang di-set aktif; meta.active.core =
+  // core yang sedang aktif (dipakai gate Activate + label "Core aktif").
+  const wsActiveRan = telemetryMeta?.active?.ran ?? undefined;
+  useEffect(() => {
+    if (wsActiveRan === undefined) return;
+    setActiveActivation(wsActiveRan ? { provider: wsActiveRan } : null);
+  }, [wsActiveRan]);
+
+  const activeCoreKey = telemetryMeta?.active?.core ?? null; // null = belum ada data WS
+  const hasCoreData = telemetryMeta?.active != null;
+
+  // ---- Provider activation state ----
+  // RBAC 2-role: user & admin sama-sama operator penuh.
+  const isViewer = false;
+  // Provider yang sedang aktif secara eksplisit (atau null).
+  const activatedKey = activeActivation?.provider || null;
+  const activatedLabel = providers.find((p) => p.key === activatedKey)?.label || activatedKey;
+  const isActiveTab = activatedKey != null && activatedKey === activeProvider;
+  const isBusy = activationBusy;
+
+  // Current Operator RAN — F3: sumber kebenaran = status AKTIVASI eksplisit
+  // (selaras CorePage), health sebagai sekunder.
   const currentOperator = useMemo(() => {
     if (!providers.length) return null;
-    const defaultKey = providers[0].key;
-    const allHealth = { [defaultKey]: domainHealth(components) };
-    const running =
-      providers.find((p) => allHealth[p.key] === "healthy") ||
-      providers.find((p) => allHealth[p.key] === "degraded");
-    if (!running) return null;
-    return { ...running, health: allHealth[running.key] };
-  }, [providers, components]);
+    if (!activatedKey) return null;
+    const meta = providers.find((p) => p.key === activatedKey);
+    if (!meta) return { key: activatedKey, label: activatedKey, icon: "settings_input_antenna", health: "down" };
+    return { ...meta, health: domainHealth(displayedComponents) };
+  }, [providers, activatedKey, displayedComponents]);
 
   // Judul + subtitle halaman dirender sticky TopBar lewat PageHeaderContext
   // (revisi owner t_6c29abe5). Slot right null: operator box ada di body.
@@ -142,20 +157,17 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
     }
   };
 
-  // ---- Provider activation state ----
-  // RBAC 2-role: user & admin sama-sama operator penuh.
-  const isViewer = false;
-  // Provider yang sedang aktif secara eksplisit (atau null).
-  const activatedKey = activeActivation?.provider || null;
-  const activatedLabel = providers.find((p) => p.key === activatedKey)?.label || activatedKey;
-  const isActiveTab = activatedKey != null && activatedKey === activeProvider;
-  const isBusy = activationBusy;
-
   // Toggle Activate/Deactivate untuk provider RAN pada tab yang sedang
   // dibuka. `activeProvider` = key tab (match DOMAIN_PROVIDERS["ran"]:
   // "oai" / "srsran"), sama seperti pola CorePage.
+  // F3 gate: tanpa core aktif, Activate RAN ditolak di UI (server B1/Fase-3
+  // akan jadi pengaman kedua saat akting RAN direalisasikan).
   const handleToggleActivation = async () => {
     if (isViewer || !activeProvider) return;
+    if (!isActiveTab && !activatedKey && hasCoreData && !activeCoreKey) {
+      alert("Aktifkan Core dulu di halaman Core sebelum mengaktifkan RAN.");
+      return;
+    }
     setActivationBusy(true);
     try {
       if (isActiveTab) {
@@ -171,6 +183,11 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
       }
     } catch (e) {
       console.error("Provider activation failed", e);
+      const reason = e?.payload?.message || e?.message;
+      if (e?.payload?.reason === "provider_active") {
+        getActiveProvider("ran").then(setActiveActivation).catch(() => {});
+      }
+      if (reason) alert(reason);
     } finally {
       setActivationBusy(false);
     }
@@ -217,8 +234,7 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
           })}
         </div>
 
-        {/* Current Operator — provider yang BENAR-BENAR sedang jalan
-            (bukan sekadar tab yang diklik), bergaya serupa CorePage */}
+        {/* Current Operator — F3: dari status aktivasi eksplisit, selaras CorePage */}
         <div className="shrink-0 glass-card border border-outline-variant rounded-2xl px-5 py-3 shadow-sm flex items-center gap-3 self-start">
           <span className="material-symbols-outlined text-primary text-xl">
             {currentOperator?.icon || "cloud_off"}
@@ -228,13 +244,20 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
             <p className="font-bold text-sm text-on-surface">
               {currentOperator?.label ?? "None"}
             </p>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-              currentOperator
-                ? HEALTH_BADGE_CLASS[currentOperator.health]
-                : "bg-surface-container text-on-surface-variant"
-            }`}>
-              ● {currentOperator ? HEALTH_BADGE_LABEL[currentOperator.health] : "NO ACTIVE PROVIDER"}
-            </span>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              {currentOperator && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary-container text-on-primary-container">
+                  ACTIVATED
+                </span>
+              )}
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                currentOperator
+                  ? HEALTH_BADGE_CLASS[currentOperator.health]
+                  : "bg-surface-container text-on-surface-variant"
+              }`}>
+                ● LIVE: {currentOperator ? HEALTH_BADGE_LABEL[currentOperator.health] : "NO ACTIVE PROVIDER"}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -262,6 +285,23 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
                 <span className={`w-1.5 h-1.5 rounded-full ${STATUS_META[hero?.status]?.dot ?? "bg-outline"}`} />
                 {STATUS_META[hero?.status]?.label ?? hero?.status}
               </span>
+            </div>
+
+            {/* F3: status core yang sedang aktif (dari meta WS v2) — chip di hero.
+                Fase 3 (B4) akan menambah binding N2 per-RAN di meta.bindings;
+                untuk sekarang tampilkan saja core eksplisit yang aktif. */}
+            <div className="px-6 pb-4 -mt-1">
+              {hasCoreData && activeCoreKey ? (
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full bg-secondary-container text-on-secondary-container">
+                  <span className="w-1.5 h-1.5 rounded-full bg-secondary" />
+                  Core aktif: {providerLabel(activeCoreKey)}
+                </span>
+              ) : hasCoreData ? (
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full bg-surface-container text-on-surface-variant">
+                  <span className="w-1.5 h-1.5 rounded-full bg-outline" />
+                  Tidak ada core aktif — aktifkan dulu di halaman Core
+                </span>
+              ) : null}
             </div>
 
             <div className="p-6 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-6">
@@ -360,13 +400,15 @@ export default function RanPage({ components, currentUser, onSelect, onRestart }
                     tombol disabled. Viewer: lihat status tapi tombol disabled. */}
                 <button
                   onClick={handleToggleActivation}
-                  disabled={isBusy || isViewer || (activatedKey != null && !isActiveTab)}
+                  disabled={isBusy || isViewer || (activatedKey != null && !isActiveTab) || (!activatedKey && hasCoreData && !activeCoreKey)}
                   title={
                     isViewer
                       ? "Viewers cannot activate providers"
                       : activatedKey != null && !isActiveTab
                         ? `Provider ${activatedLabel} sedang aktif — nonaktifkan dulu`
-                        : ""
+                        : !activatedKey && hasCoreData && !activeCoreKey
+                          ? "Aktifkan Core dulu di halaman Core"
+                          : ""
                   }
                   className={
                     isActiveTab

@@ -187,12 +187,16 @@ def get_active_provider(domain: str, current_user: str = Depends(require_user)):
 def activate_provider(
     domain: str, body: ActivateProviderRequest, current_user: str = Depends(require_operator)
 ):
-    """Aktifkan satu provider core. User/admin only.
+    """Aktifkan satu provider untuk domain ini. User/admin only.
 
-    Eksklusif by design: tabel active_providers primary key-nya 'domain',
-    jadi aktivasi provider baru otomatis MENGGANTI provider aktif sebelumnya.
-    UI yang menegakkan eksklusifitas (disable tombol Activate provider lain);
-    di backend upsert sengaja simple sesuai spesifikasi owner."""
+    Eksklusifitas ditégakkan SERVER-SIDE (B1 plan exclusive-core-ran, Fase 1):
+    kalau sudah ada provider lain yang aktif di domain yang sama -> HTTP 409
+    `provider_active`. Client HARUS deactivate dulu sebelum activate provider
+    baru. Re-activate provider yang sama tetap idempotent (200).
+
+    Catatan Fase 1: aktivasi masih bookkeeping DB — tidak menyentuh testbed
+    (tidak ada actuation core/RAN; itu Fase 2/3 via B2-B5 dengan env
+    ALLOW_DB_ONLY_ACTIVATION sebagai kill-switch semantik akting)."""
     providers = DOMAINS.get(domain)
     if not providers:
         raise HTTPException(404, f"Unknown domain '{domain}'")
@@ -200,16 +204,32 @@ def activate_provider(
         raise HTTPException(400, f"Unknown provider '{body.provider}' for domain '{domain}'")
     with get_db_session() as db:
         row = db.query(ActiveProviderModel).filter(ActiveProviderModel.domain == domain).first()
+        active_provider = row.provider if row else None
+        # B1 — eksklusif server-side: tolak kalau provider LAIN sedang aktif.
+        if active_provider and active_provider != body.provider:
+            raise HTTPException(
+                409,
+                detail={
+                    "reason": "provider_active",
+                    "active": active_provider,
+                    "domain": domain,
+                    "message": (
+                        f"Provider '{active_provider}' masih aktif di domain "
+                        f"'{domain}'. Matikan dulu sebelum mengaktifkan "
+                        f"'{body.provider}'."),
+                },
+            )
+        now = time.time()
         if row:
             row.provider = body.provider
             row.username = current_user
-            row.activated_at = time.time()
+            row.activated_at = now
         else:
             row = ActiveProviderModel(
                 domain=domain,
                 provider=body.provider,
                 username=current_user,
-                activated_at=time.time(),
+                activated_at=now,
             )
             db.add(row)
     log_audit(current_user, "PROVIDER_ACTIVATE", domain=domain, detail=body.provider)
@@ -632,28 +652,59 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
 @app.websocket("/ws/telemetry")
 async def telemetry_ws(ws: WebSocket):
     """
-    Pushes a full snapshot of Core/RAN/RIC state every 3s, including
-    each component's current reservation status.
-    Swap the sleep+jitter loop for a real subscription (e.g. T-Tracer
-    stream, E2 indication messages) when you wire this to a live testbed.
+    Pushes a full snapshot of Core/RAN/RIC state every 3s (payload v2):
+
+        {
+          "meta": {
+            "ts": <epoch>,
+            "active":   {"core": "oai"|null, "ran": null, "ric": null},
+            "bindings": {}          # diisi Fase 3 (B4 ran_core_bindings)
+          },
+          "domains": {"core": [...], "ran": [...], "ric": [...]}
+        }
+
+    B6 (plan exclusive-core-ran, Fase 1): domain yang di-stream adalah
+    provider AKTIF per domain (tabel active_providers), bukan selalu
+    provider pertama. Kalau domain belum punya provider aktif -> fallback
+    provider default (pertama terdaftar). Frontend menormalkan payload
+    lama {domain: [...]} DAN v2 via api.js::normalizeSnapshot.
+    Reservation overlay & random jitter (efektif hanya di adapter mock)
+    perilakunya tidak berubah. ALLOW_DB_ONLY_ACTIVATION semantics:
+    endpoint ini murni READ — tidak pernah mengaktifkan apa pun.
     """
     await ws.accept()
     try:
         while True:
-            # Live telemetry cuma untuk provider default (pertama terdaftar)
-            # di tiap domain -- provider lain diambil manual lewat REST saat
-            # tab-nya dipilih di frontend.
-            default_adapters = {
-                domain: next(iter(providers.values()))["adapter"]
-                for domain, providers in DOMAINS.items()
-            }
-            for adapter in default_adapters.values():
+            # Provider aktif per-domain dari DB (query murah, sekali per tick)
+            active_map = {}
+            try:
+                with get_db_session() as db:
+                    rows = db.query(ActiveProviderModel).all()
+                    active_map = {r.domain: r.provider for r in rows}
+            except Exception:
+                active_map = {}  # DB bermasalah -> fallback default providers
+
+            streamed = {}
+            for domain, providers in DOMAINS.items():
+                key = active_map.get(domain)
+                entry = providers.get(key) if key else None
+                if entry is None:
+                    entry = next(iter(providers.values()))
+                adapter = entry["adapter"]
                 if random_tick():
-                    adapter.jitter_health()
+                    adapter.jitter_health()  # no-op untuk adapter nyata
+                streamed[domain] = adapter
 
             snapshot = {
-                domain: [_with_reservation(domain, c) for c in adapter.list()]
-                for domain, adapter in default_adapters.items()
+                "meta": {
+                    "ts": time.time(),
+                    "active": {d: active_map.get(d) for d in DOMAINS},
+                    "bindings": {},  # B4/Fase 3: isi dari ran_core_bindings
+                },
+                "domains": {
+                    domain: [_with_reservation(domain, c) for c in adapter.list()]
+                    for domain, adapter in streamed.items()
+                },
             }
             await ws.send_text(json.dumps(snapshot))
             await asyncio.sleep(3)

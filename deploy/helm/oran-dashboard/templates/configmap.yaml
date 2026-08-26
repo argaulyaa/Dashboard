@@ -1,4 +1,4 @@
-{{- if or .Values.backend.oai.sshHost .Values.backend.ran.sshHost }}
+{{- if or .Values.backend.oai.sshHost .Values.backend.ran.sshHost .Values.backend.k8s.sshHost }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -14,6 +14,17 @@ data:
   OAI_SSH_RAN_HOST: {{ .Values.backend.ran.sshHost | quote }}
   OAI_SSH_RAN_PORT: {{ .Values.backend.ran.sshPort | quote }}
   OAI_SSH_RAN_USER: {{ .Values.backend.ran.sshUser | quote }}
+  {{- end }}
+  {{- /* Nama env HARUS sama dengan yang dibaca adapters.py::_build_core_providers()
+         (OAI_K8S_SSH_HOST / _PORT / _USER / OAI_K8S_NAMESPACE /
+         OAI_K8S_ADMIN_CONF). Password TIDAK di sini - lewat Secret
+         (lihat templates/secret.yaml). */}}
+  {{- if .Values.backend.k8s.sshHost }}
+  OAI_K8S_SSH_HOST: {{ .Values.backend.k8s.sshHost | quote }}
+  OAI_K8S_SSH_PORT: {{ .Values.backend.k8s.sshPort | quote }}
+  OAI_K8S_SSH_USER: {{ .Values.backend.k8s.sshUser | quote }}
+  OAI_K8S_NAMESPACE: {{ .Values.backend.k8s.namespace | quote }}
+  OAI_K8S_ADMIN_CONF: {{ .Values.backend.k8s.kubeconfig | quote }}
   {{- end }}
   DATABASE_URL: {{ .Values.database.url | quote }}
 {{- end }}
