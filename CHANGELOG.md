@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-08-26 - Deploy LIVE Fase1: provider core `oai` baca state K8s 5G testbed
+
+### Hasil deploy (rev31, helm release `oran`, ns `dashboard`)
+- Commit Fase1 masuk `main` via fast-forward: `bc1bd53` (feat: K8s live core +
+  B1 409 eksklusif + B6 WS meta.active + UI F1-F4) dan `642f3c9` (ci: guard
+  `K8S_ARGS` merge runner-local `oran-k8s-values.yaml`). CI build & helm upgrade
+  sukses -> **revision 31 deployed**, rollback point rev30 tersedia.
+- Kredensial OAI K8s **tidak di git**: satu-satunya sumber =
+  `/home/github-runner/oran-k8s-values.yaml` di mesin runner (di-merge CI saat
+  upgrade). Terverifikasi env pod rev31 memuat lengkap 7 var:
+  `OAI_K8S_SSH_HOST/PORT/USER/PASSWORD`, `K8S_SUDO_PASSWORD`,
+  `OAI_K8S_NAMESPACE=5g-core`, `OAI_K8S_ADMIN_CONF=/etc/kubernetes/admin.conf`.
+- Secret `dashboard/oran-backend` sengaja TIDAK berisi key `OAI_K8S_*`
+  (isinya SMTP + OAI_SSH legacy saja).
+
+### Verifikasi live (GET /api/core/components?provider=oai @ NodePort 30090)
+7 NF K8s asli semua `healthy`, detail pod nyata dari cluster (contoh):
+- AMF `oai-amf-5c9d78485c-*` podIP 192.168.240.19 • SMF ...240.18 •
+  UPF ...240.14 • NRF ...240.17 • AUSF ...240.1 • UDM ...240.145 • UDR ...240.12.
+- `/api/core/providers`: desc oai = "live dari Kubernetes (ns 5g-core via
+  kubectl@10.91.2.156)" — bukan docker legacy open5gs.
+- WS `/ws/telemetry` mengirim `meta.active` (struktur B6 benar; nilai `null`
+  karena belum ada aktivasi eksplisit — aktivasi dilakukan owner lewat UI).
+
+### Follow-up kecil
+- `c1a1a47` refactor(test): `test_ran_activation.py` dibungkus fungsi + purge
+  sys.modules (fix suite-pollution pytest), pushed ke feat branch.
+
 ## 2026-08-25 - Hotfix: 5 route blank/frozen (Maximum update depth exceeded) + TopBar keluar provider + ErrorBoundary
 
 ### Gejala (laporan user via Bill)
