@@ -119,6 +119,40 @@ CORE_KIND_LABELS = {
 }
 
 
+def _sh_quote(s: str) -> str:
+    """Quote aman utk shell (shlex.quote; fallback manual kalau modul hilang)."""
+    try:
+        import shlex
+        return shlex.quote(s)
+    except Exception:
+        return "'" + str(s).replace("'", "'\\''") + "'"
+
+
+# Port kanonik per NF (informasi UI; bukan hasil probe aktif — jujur & statis)
+NF_PORT_HINTS = {
+    "amf": 38412,   # N2 SCTP
+    "smf": 38412,   # PFCP/N4 ke UPF via smf (N4 8805 UDP utk open5gs; OAI PFCP)
+    "upf": 2152,    # GTP-U
+    "nrf": 8080,    # SBI HTTP-2 / REST
+    "ausf": 8080,
+    "udm": 8080,
+    "udr": 8080,
+}
+
+# Pemetaan default comp_id -> prefix pod di namespace K8s 5g-core
+# (deployment oai-amf -> pod oai-amf-<rs>-<hash>). Bisa dioverride via
+# env OAI_K8S_COMPONENT_MAP (JSON) tanpa ubah kode.
+DEFAULT_OAI_K8S_COMPONENT_MAP = {
+    "amf": "oai-amf",
+    "smf": "oai-smf",
+    "upf": "oai-upf",
+    "nrf": "oai-nrf",
+    "ausf": "oai-ausf",
+    "udm": "oai-udm",
+    "udr": "oai-udr",
+}
+
+
 class CoreAdapter(BaseAdapter):
     """Mock 5G Core adapter — data statis, cocok sebelum testbed OAI siap."""
 
@@ -496,6 +530,356 @@ class SshDockerCoreAdapter(DockerCoreAdapter):
             return 0.0
         except Exception:
             return 0.0
+
+
+class KubectlOaiCoreAdapter:
+    """
+    Adapter Core OAI berbasis Kubernetes — membaca state 5GC langsung dari
+    cluster K8s (Fase 1 plan exclusive-core-ran: read-only visibility).
+
+    Latar belakang: OAI 5GC sudah migrasi Docker Compose -> Kubernetes.
+    Adapter lama (SshDockerCoreAdapter) salah sasaran karena SSH ke node core
+    lalu docker-exec kontainer Open5GS legacy di network demo-oai-public-net
+    (192.168.70.128/26) — itu BUKAN 5GC yang aktif. Adapter ini menggantikan
+    mekanisme pembacaannya: tetap via paramiko SSH, tapi perintahnya kubectl:
+
+        sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf -n 5g-core ...
+
+    Node target = master K8s (OAI_K8S_SSH_HOST, default 10.91.2.156). Hanya
+    master yang punya /etc/kubernetes/admin.conf; worker .151/.152 tidak.
+    admin.conf root-only (600), jadi tiap perintah dibungkus `sudo -S`
+    dengan password dari env (K8S_SUDO_PASSWORD, fallback OAI_SSH_PASSWORD).
+
+    READ-ONLY: hanya get/describe/top/logs. Tidak ada actuation cluster
+    (scale/delete/apply/restart) dan tidak menyentuh N2/N3/GTP routes.
+    restart() komponen sengaja TIDAK dieksekusi ke cluster — cukup bookkeeping
+    status restarting sesuai kontrak adapter (aktuator menyusul di Fase 2+).
+
+    Konfigurasi via .env:
+      OAI_K8S_SSH_HOST     (default 10.91.2.156)
+      OAI_K8S_SSH_PORT     (default 22)
+      OAI_K8S_SSH_USER     (default telmat)
+      OAI_K8S_SSH_PASSWORD / K8S_SUDO_PASSWORD
+      OAI_K8S_NAMESPACE    (default 5g-core)
+      OAI_K8S_ADMIN_CONF   (default /etc/kubernetes/admin.conf)
+
+    Kontrak adapter sama dengan adapter core lain
+    (list/get/restart/jitter_health/get_logs) — frontend tidak berubah.
+    """
+
+    CACHE_TTL = 2.5  # detik; telemetry push tiap 3 dtk, hindari spam SSH
+
+    def __init__(self, component_map: dict, ssh_host: str, ssh_user: str,
+                 ssh_password: str = "", sudo_password: str = "",
+                 ssh_port: int = 22, namespace: str = "5g-core",
+                 kubeconfig: str = "/etc/kubernetes/admin.conf",
+                 kubectl_bin: str = "kubectl"):
+        self._map = dict(component_map)  # comp_id -> prefix pod (mis. "oai-amf")
+        self._ssh = {
+            "host": ssh_host,
+            "port": int(ssh_port),
+            "user": ssh_user,
+            "password": ssh_password,
+            "sudo": sudo_password or ssh_password,
+        }
+        self._ns = namespace
+        self._kubeconfig = kubeconfig
+        self._kubectl = kubectl_bin
+        self._conn = None          # paramiko client persistent (lazy connect)
+        self._cache: dict = {}     # comp_id -> dict komponen
+        self._last_fetch = 0.0
+
+    # ------------------------------------------------------------------
+    # Kontrak adapter
+    # ------------------------------------------------------------------
+
+    def list(self) -> List[dict]:
+        self._maybe_refresh()
+        return [self._cache[c] for c in self._map]
+
+    def get(self, comp_id: str) -> Optional[dict]:
+        if comp_id not in self._map:
+            return None
+        self._maybe_refresh()
+        return self._cache.get(comp_id)
+
+    async def restart(self, comp_id: str) -> Optional[dict]:
+        """Read-only Fase 1: TIDAK mengeksekusi apa pun ke cluster.
+
+        Status 'restarting' murni indikasi UI sesaat (kontrak adapter),
+        lalu data live berikutnya dari cluster yang menentukan lagi.
+        Actuation (rollout restart dsb.) masuk Fase 2 dengan approval."""
+        if comp_id not in self._map:
+            return None
+        await asyncio.sleep(1.5)
+        self.get(comp_id)
+        result = dict(self._cache.get(comp_id) or {})
+        if result and result.get("status") == "healthy":
+            result["status"] = "restarting"
+            result["detail"] = (
+                "Restart request noted (read-only mode; no cluster action)")
+            result["last_updated"] = time.time()
+        return result
+
+    def jitter_health(self):
+        """No-op — status datang dari cluster nyata, bukan simulasi."""
+        pass
+
+    def get_logs(self, comp_id: str, tail: int = 100) -> str:
+        """Log pod NF via kubectl logs (read-only)."""
+        if comp_id not in self._map:
+            return f"Component '{comp_id}' not mapped in K8s configuration."
+        try:
+            out, err = self._exec(
+                f"{self._kctl()} -n {self._ns} logs --tail={int(tail)} "
+                f"--timestamps -l app={self._map[comp_id]}")
+            return (out or "").strip() or (
+                err.strip() or f"(tidak ada log untuk {self._map[comp_id]})")
+        except Exception as e:
+            return f"[SSH Error] Gagal ambil log '{comp_id}' via kubectl: {e}"
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _kctl(self) -> str:
+        """Prefix perintah kubectl lengkap dengan kubeconfig admin."""
+        return (f"sudo -S -p '' {self._kubectl} "
+                f"--kubeconfig={self._kubeconfig}")
+
+    def _exec(self, cmd: str):
+        """Jalankan command di node K8s via paramiko (koneksi persistent).
+
+        Password sudo dikirim via stdin (echo <pw> | sudo -S) — tidak pernah
+        masuk argv proses maupun log. cmd TIDAK boleh berisi input user."""
+        import paramiko
+        conn = self._conn
+        if conn is None or not conn.get_transport() or not conn.get_transport().is_active():
+            conn = paramiko.SSHClient()
+            conn.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            conn.connect(
+                hostname=self._ssh["host"],
+                port=self._ssh["port"],
+                username=self._ssh["user"],
+                password=self._ssh["password"],
+                timeout=8,
+                banner_timeout=10,
+            )
+            self._conn = conn
+        full = f"echo {_sh_quote(self._ssh['sudo'])} | {cmd}"
+        _, stdout, stderr = conn.exec_command(full, timeout=25)
+        out = stdout.read().decode("utf-8", errors="replace")
+        err = stderr.read().decode("utf-8", errors="replace")
+        return out, err
+
+    def _maybe_refresh(self):
+        """Fetch ulang state cluster (dibatasi CACHE_TTL supaya tidak spam SSH).
+
+        Satu round-trip SSH menggabungkan 4 bacaan read-only:
+          1. get pods -o wide          -> phase/status/node/pod-ip per NF
+          2. get pods custom-columns   -> status.startTime (sumber uptime)
+          3. kubectl top pods          -> CPU/mem real (butuh metrics-server)
+          4. get svc amf,upf           -> ClusterIP endpoint AMF(N2)/UPF(GTP)
+        """
+        now = time.time()
+        if now - self._last_fetch < self.CACHE_TTL:
+            return
+        self._last_fetch = now
+        kc = self._kctl()
+        try:
+            out, err = self._exec(
+                f"{kc} -n {self._ns} get pods -o wide --no-headers; "
+                f"echo '===STARTED==='; "
+                f"{kc} -n {self._ns} get pods -o custom-columns="
+                f"':metadata.name,:status.startTime' --no-headers; "
+                f"echo '===METRICS==='; "
+                f"{kc} -n {self._ns} top pods --no-headers 2>/dev/null; "
+                f"echo '===SVC==='; "
+                f"{kc} -n {self._ns} get svc amf,upf -o custom-columns="
+                f"':metadata.name,:spec.clusterIP' --no-headers 2>/dev/null"
+            )
+        except Exception as e:
+            print(f"[KubectlOaiCoreAdapter] SSH ke {self._ssh['host']} gagal: {e}",
+                  flush=True)
+            for comp_id in self._map:
+                self._cache[comp_id] = self._down_component(
+                    comp_id, f"SSH ke node K8s gagal: {e}")
+            return
+
+        if "===STARTED===" not in out:
+            # kubectl/sudo gagal total (password salah, admin.conf hilang, dsb.)
+            reason = (err or out or "kubectl tidak mengembalikan data").strip()
+            for comp_id in self._map:
+                self._cache[comp_id] = self._down_component(
+                    comp_id, f"kubectl gagal: {reason[:160]}")
+            return
+
+        pods, started, metrics, svcs = {}, {}, {}, {}
+        section = "pods"
+        for raw in out.splitlines():
+            line = raw.strip()
+            if line == "===STARTED===":
+                section = "started"; continue
+            if line == "===METRICS===":
+                section = "metrics"; continue
+            if line == "===SVC===":
+                section = "svc"; continue
+            if not line:
+                continue
+            if section == "pods":
+                p = line.split(None, 8)
+                # NAME READY STATUS RESTARTS AGE IP NODE ...
+                if len(p) >= 6:
+                    pods[p[0]] = {
+                        "ready": p[1], "phase": p[2],
+                        "restarts": p[3],
+                        "pod_ip": p[5] if len(p) > 5 else "",
+                        "node": p[6] if len(p) > 6 else "",
+                    }
+            elif section == "started":
+                p = line.split()
+                if len(p) >= 2:
+                    started[p[0]] = "" if p[1] == "<none>" else p[1]
+            elif section == "metrics":
+                p = line.split()
+                # NAME CPU(cores) CPU%(?) MEM ... -- format metrics-server:
+                # name  100m  1%  250Mi  2%  (5 kolom)
+                if len(p) >= 4:
+                    metrics[p[0]] = {
+                        "cpu_pct": self._cpu_to_pct(p[1]),
+                        "mem_mi": self._to_float_mi(p[3]),
+                    }
+            elif section == "svc":
+                p = line.split()
+                if len(p) >= 2:
+                    svcs[p[0]] = p[1]
+
+        for comp_id, prefix in self._map.items():
+            entry = None
+            for pod_name, info in pods.items():
+                if pod_name == prefix or pod_name.startswith(prefix + "-"):
+                    entry = (pod_name, info)
+                    break
+            if entry is None:
+                self._cache[comp_id] = self._down_component(
+                    comp_id, f"Pod tidak ditemukan di ns {self._ns}: {prefix}*")
+                continue
+            pod_name, info = entry
+            phase = info["phase"]
+            status = self._map_k8s_status(phase, info["restarts"])
+            start_iso = started.get(pod_name, "")
+            started_at = self._parse_start_time(start_iso)
+            met = metrics.get(pod_name, {})
+            detail_bits = [f"Pod {pod_name} ({phase}, {info['ready']})"]
+            if info["node"]:
+                detail_bits.append(f"node {info['node']}")
+            if info["pod_ip"]:
+                detail_bits.append(f"podIP {info['pod_ip']}")
+            if status == "degraded" and info["restarts"] not in ("0",):
+                detail_bits.append(f"restarts={info['restarts']}")
+            ep = svcs.get(comp_id)
+            if comp_id == "amf" and svcs.get("amf") not in (None, "None"):
+                detail_bits.append(f"N2 endpoint svc/amf {svcs['amf']}")
+            elif ep and ep != "None":
+                detail_bits.append(f"svc {comp_id} {ep}")
+            self._cache[comp_id] = {
+                "id": comp_id,
+                "name": comp_id.upper(),
+                "kind": CORE_KIND_LABELS.get(comp_id, comp_id.upper()),
+                "status": status,
+                "detail": " • ".join(detail_bits),
+                "host": self._ssh["host"],   # target SSH console
+                "cpu_pct": met.get("cpu_pct", 0.0),
+                "mem_gb": round(met.get("mem_mi", 0.0) / 1024.0, 2),
+                "mem_pct": 0.0,  # persen butuh kapasitas node; sengaja 0 (jujur)
+                "throughput_mbps": 0.0,
+                "port": NF_PORT_HINTS.get(comp_id, 0),
+                "latency_ms": 0.0,
+                "active_ues": 0,
+                "last_updated": time.time(),
+                "uptime_seconds": (time.time() - started_at) if started_at else 0,
+                "started_at": started_at or time.time(),
+            }
+
+    @staticmethod
+    def _map_k8s_status(phase: str, restarts: str = "0") -> Status:
+        """Map fase/status kolom `kubectl get pods` ke 4 nilai frontend."""
+        s = (phase or "").lower()
+        if "running" in s:
+            # Running tapi restart count tinggi = crash-loop tersembunyi
+            try:
+                if int(str(restarts).split("(")[0]) >= 10:
+                    return "degraded"
+            except Exception:
+                pass
+            return "healthy"
+        if "pending" in s or "containercreating" in s or "init:" in s:
+            return "degraded"
+        if "crashloopbackoff" in s or "error" in s or "evicted" in s:
+            return "down"
+        if "terminated" in s or "completed" in s:
+            return "degraded"
+        return "degraded"
+
+    @staticmethod
+    def _parse_start_time(iso_str: str) -> Optional[float]:
+        """ISO timestamp Kubernetes (mis. 2026-08-26T07:01:33Z) -> epoch."""
+        if not iso_str:
+            return None
+        try:
+            from datetime import datetime, timezone
+            s = iso_str.strip().rstrip("Z")
+            if "." in s:
+                s = s.split(".")[0]
+            dt = datetime.strptime(s, "%Y-%m-%dT%H:%M:%S").replace(
+                tzinfo=timezone.utc)
+            return dt.timestamp()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _cpu_to_pct(cpu_cores: str) -> float:
+        """'125054n' (nanocores) atau '125m' (millicores) -> persen 1 core."""
+        try:
+            c = cpu_cores.strip().lower()
+            if c.endswith("n"):
+                return round(float(c[:-1]) / 1e7, 1)   # nano -> % of 1 core
+            if c.endswith("m"):
+                return round(float(c[:-1]) / 10.0, 1)  # milli -> %
+            return round(float(c), 1)
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _to_float_mi(mem_val: str) -> float:
+        """'25392Mi' / '1Gi' -> MiB float."""
+        try:
+            v = mem_val.strip().lower()
+            if v.endswith("mi"):
+                return float(v[:-2])
+            if v.endswith("gi"):
+                return float(v[:-2]) * 1024
+            if v.endswith("ki"):
+                return float(v[:-2]) / 1024
+            return float(v)
+        except Exception:
+            return 0.0
+
+    def _down_component(self, comp_id: str, reason: str) -> dict:
+        return {
+            "id": comp_id,
+            "name": comp_id.upper(),
+            "kind": CORE_KIND_LABELS.get(comp_id, comp_id.upper()),
+            "status": "down",
+            "detail": reason,
+            "host": self._ssh["host"],
+            "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
+            "throughput_mbps": 0.0, "port": 0, "latency_ms": 0.0,
+            "active_ues": 0,
+            "last_updated": time.time(),
+            "uptime_seconds": 0,
+            "started_at": time.time(),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -905,6 +1289,19 @@ class RicAdapter(BaseAdapter):
 # Magma Core adapter (skeleton — belum diimplementasi)
 # ---------------------------------------------------------------------------
 
+# Pemetaan default Deployment OAI 5GC di K8s (ns 5g-core) utk provider "k8s".
+DEFAULT_K8S_CORE_MAP_K8S = {
+    "amf":   {"deploy": "oai-amf",  "kind": "AMF"},
+    "smf":   {"deploy": "oai-smf",  "kind": "SMF"},
+    "upf":   {"deploy": "oai-upf",  "kind": "UPF"},
+    "nrf":   {"deploy": "oai-nrf",  "kind": "NRF"},
+    "ausf":  {"deploy": "oai-ausf", "kind": "AUSF"},
+    "udm":   {"deploy": "oai-udm",  "kind": "UDM"},
+    "udr":   {"deploy": "oai-udr",  "kind": "UDR"},
+    "mysql": {"deploy": "mysql",    "kind": "MySQL"},
+}
+
+
 class MagmaCoreAdapter:
     """
     Adapter Core berbasis Magma Orchestrator (Orc8R) REST API.
@@ -965,50 +1362,95 @@ def _build_core_providers() -> dict:
     Provider lain diambil sekali via REST saat tab-nya diklik di frontend.
     """
     providers = {}
+    adapter = None
+    oai_desc = None
 
-    # --- OAI Core via Docker (SSH atau Docker Engine API) ---
-    oai_containers_raw = os.environ.get("OAI_CORE_CONTAINERS", "")
-    oai_ssh_host = os.environ.get("OAI_SSH_HOST", "") or None
-    oai_docker_host = os.environ.get("OAI_DOCKER_HOST", "") or None
-
-    # Pemetaan default sesuai container yang ada di mini PC testbed (CORE 10.91.2.151)
-    DEFAULT_OAI_CONTAINER_MAP = {
-        "amf": "oai-amf", "smf": "oai-smf", "upf": "oai-upf", "nrf": "oai-nrf",
-        "ausf": "oai-ausf", "udm": "oai-udm", "udr": "oai-udr",
-        "mysql": "mysql", "ext-dn": "oai-ext-dn",
-    }
-    if oai_containers_raw:
+    # --- OAI Core via Kubernetes (Fase 1: read-only visibility) ---
+    # 5GC aktif jalan di K8s (ns 5g-core). Adapter membaca state cluster via
+    # kubectl over SSH ke node master yang memegang /etc/kubernetes/admin.conf.
+    # Env lama OAI_SSH_* masih didukung sebagai jalur Docker-legacy untuk
+    # setup non-K8s, tapi testbed ini TIDAK memakainya lagi (docker di node
+    # core hanya berisi Open5GS demo lama — bukan 5GC aktif).
+    oai_k8s_host = os.environ.get("OAI_K8S_SSH_HOST", "") or None
+    if oai_k8s_host:
         try:
-            container_map = json.loads(oai_containers_raw)
+            k8s_map = dict(DEFAULT_OAI_K8S_COMPONENT_MAP)
+            custom = os.environ.get("OAI_K8S_COMPONENT_MAP", "")
+            if custom:
+                try:
+                    k8s_map.update(json.loads(custom))
+                except Exception:
+                    pass  # JSON rusak -> pakai pemetaan default
+            adapter = KubectlOaiCoreAdapter(
+                k8s_map,
+                ssh_host=oai_k8s_host,
+                ssh_user=os.environ.get("OAI_K8S_SSH_USER", "telmat"),
+                ssh_password=os.environ.get("OAI_K8S_SSH_PASSWORD", ""),
+                sudo_password=os.environ.get("K8S_SUDO_PASSWORD", ""),
+                ssh_port=int(os.environ.get("OAI_K8S_SSH_PORT", "22")),
+                namespace=os.environ.get("OAI_K8S_NAMESPACE", "5g-core"),
+                kubeconfig=os.environ.get(
+                    "OAI_K8S_ADMIN_CONF", "/etc/kubernetes/admin.conf"),
+            )
+            oai_desc = ("OpenAirInterface 5G Core — live dari Kubernetes "
+                        f"(ns {os.environ.get('OAI_K8S_NAMESPACE', '5g-core')} "
+                        f"via kubectl@{oai_k8s_host})")
         except Exception:
-            container_map = DEFAULT_OAI_CONTAINER_MAP
-    elif oai_ssh_host or oai_docker_host:
-        container_map = DEFAULT_OAI_CONTAINER_MAP
-    else:
-        container_map = {}
-
-    if oai_ssh_host and container_map:
-        # Mode SSH: perintah docker dijalankan remote via paramiko — paling pas
-        # untuk backend di PC developer yang menembak mini PC testbed.
-        adapter = SshDockerCoreAdapter(
-            container_map,
-            ssh_host=oai_ssh_host,
-            ssh_user=os.environ.get("OAI_SSH_USER", "core"),
-            ssh_password=os.environ.get("OAI_SSH_PASSWORD", ""),
-            ssh_port=int(os.environ.get("OAI_SSH_PORT", "22")),
-        )
-    elif container_map:
-        try:
-            adapter = DockerCoreAdapter(container_map, docker_host=oai_docker_host)
-        except Exception:
-            # Docker tidak reachable atau env tidak valid → fallback ke mock
             adapter = CoreAdapter()
+            oai_desc = "OpenAirInterface 5G Core (fallback mock — env K8s invalid)"
     else:
-        adapter = CoreAdapter()  # fallback mock
+        oai_desc = None  # jatuh ke blok Docker-legacy di bawah
+
+    # --- Jalur Docker-legacy (hanya dipakai kalau OAI_K8S_SSH_HOST kosong) ---
+    if oai_desc is None:
+        oai_containers_raw = os.environ.get("OAI_CORE_CONTAINERS", "")
+        oai_ssh_host = os.environ.get("OAI_SSH_HOST", "") or None
+        oai_docker_host = os.environ.get("OAI_DOCKER_HOST", "") or None
+
+        # Pemetaan default sesuai container compose OAI versi lama (non-K8s)
+        DEFAULT_OAI_CONTAINER_MAP = {
+            "amf": "oai-amf", "smf": "oai-smf", "upf": "oai-upf", "nrf": "oai-nrf",
+            "ausf": "oai-ausf", "udm": "oai-udm", "udr": "oai-udr",
+        }
+        if oai_containers_raw:
+            try:
+                container_map = json.loads(oai_containers_raw)
+            except Exception:
+                container_map = DEFAULT_OAI_CONTAINER_MAP
+        elif oai_ssh_host or oai_docker_host:
+            container_map = DEFAULT_OAI_CONTAINER_MAP
+        else:
+            container_map = {}
+
+        if oai_ssh_host and container_map:
+            # Mode SSH: perintah docker dijalankan remote via paramiko.
+            # LEGACY: hanya untuk testbed Docker lama (Open5GS demo di
+            # demo-oai-public-net) — BUKAN 5GC K8s yang sekarang aktif.
+            adapter = SshDockerCoreAdapter(
+                container_map,
+                ssh_host=oai_ssh_host,
+                ssh_user=os.environ.get("OAI_SSH_USER", "core"),
+                ssh_password=os.environ.get("OAI_SSH_PASSWORD", ""),
+                ssh_port=int(os.environ.get("OAI_SSH_PORT", "22")),
+            )
+            oai_desc = "OpenAirInterface 5G Core (Docker legacy via SSH)"
+        elif container_map:
+            try:
+                adapter = DockerCoreAdapter(container_map, docker_host=oai_docker_host)
+            except Exception:
+                # Docker tidak reachable atau env tidak valid → fallback ke mock
+                adapter = CoreAdapter()
+                oai_desc = "OpenAirInterface 5G Core (mock fallback)"
+            else:
+                oai_desc = "OpenAirInterface 5G Core (Docker Engine API)"
+        else:
+            adapter = CoreAdapter()  # fallback mock
+            oai_desc = "OpenAirInterface 5G Core (mock)"
+
     providers["oai"] = {
         "label": "OAI 5GC",
         "icon": "cloud_done",
-        "desc": "OpenAirInterface 5G Core (Docker via SSH/API)",
+        "desc": oai_desc,
         "adapter": adapter,
     }
 
@@ -1028,6 +1470,39 @@ def _build_core_providers() -> dict:
         "icon": "dns",
         "desc": "open5gs 5G Core (Docker Engine API)",
         "adapter": adapter_5gs,
+    }
+
+    # --- K8s 5GC (read-only fase 1, via SSH kubectl ke master) ---
+    # Provider baru: data langsung dari cluster (ns 5g-core). Read-only:
+    # restart dinonaktifkan. Aktif hanya kalau K8S_SSH_HOST di-set.
+    from k8s_adapter import SshK8sCoreAdapter
+    k8s_ssh_host = os.environ.get("K8S_SSH_HOST", "") or None
+    if k8s_ssh_host:
+        try:
+            k8s_deploy_map = json.loads(os.environ.get("K8S_CORE_DEPLOYMENTS", ""))
+        except Exception:
+            k8s_deploy_map = None
+        if not isinstance(k8s_deploy_map, dict) or not k8s_deploy_map:
+            import copy
+            k8s_deploy_map = copy.deepcopy(DEFAULT_K8S_CORE_MAP_K8S)
+        adapter_k8s = SshK8sCoreAdapter(
+            deploy_map=k8s_deploy_map,
+            ssh_host=k8s_ssh_host,
+            ssh_user=os.environ.get("K8S_SSH_USER", "telmat"),
+            ssh_password=os.environ.get("K8S_SSH_PASSWORD", ""),
+            ssh_port=int(os.environ.get("K8S_SSH_PORT", "22")),
+            namespace=os.environ.get("K8S_CORE_NAMESPACE", "5g-core"),
+            kubeconfig=os.environ.get("K8S_KUBECONFIG", "/etc/kubernetes/admin.conf"),
+        )
+        k8s_desc = f"OAI 5G Core di Kubernetes ns {adapter_k8s._namespace} (read-only via SSH kubectl)"
+    else:
+        adapter_k8s = CoreAdapter()  # fallback mock
+        k8s_desc = "OAI 5G Core di Kubernetes (mock — K8S_SSH_HOST belum diset)"
+    providers["k8s"] = {
+        "label": "OAI K8s",
+        "icon": "kubernetes",
+        "desc": k8s_desc,
+        "adapter": adapter_k8s,
     }
 
     # --- Magma (Orc8R) ---
