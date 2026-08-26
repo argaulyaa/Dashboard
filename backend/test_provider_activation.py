@@ -20,6 +20,14 @@ os.environ["DATABASE_URL"] = "sqlite:///./test_oran_activation.db"
 for k in ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"):
     os.environ.pop(k, None)
 
+# Isolasi antar file test dalam satu proses pytest: purge modul ter-cache
+# agar DATABASE_URL di atas efektif dan file ini punya engine DB sendiri.
+import sys  # noqa: E402
+for _m in [m for m in list(sys.modules)
+           if m.split(".")[0] in ("main", "auth", "database", "models",
+                                  "adapters", "k8s_adapter", "reservations")]:
+    del sys.modules[_m]
+
 from fastapi.testclient import TestClient  # noqa: E402
 
 import main  # noqa: E402  (imports auth/database/models via main)
@@ -98,9 +106,17 @@ def test_d_invalid_provider_400():
 
 def test_e_viewer_forbidden_but_can_read():
     """RBAC 2-role + B1: role 'user' adalah operator penuh, tapi eksklusifitas
-    server-side tetap berlaku — activate provider lain saat ada yang aktif
-    tetap ditolak 409 (lihat __main__: e menguji 409, e2 menguji sukses)."""
-    pass
+    server-side tetap berlaku — activate provider lain saat open5gs masih aktif
+    (dari c2) ditolak 409; setelah deactivate, activate magma sukses (e2)."""
+    r = client.post("/api/core/activate-provider", headers=USER, json={"provider": "magma"})
+    assert r.status_code == 409, f"expected 409, got {r.status_code}: {r.text}"
+    print("PASS (e): user biasa activate provider lain saat ada yang aktif -> 409")
+    client.post("/api/core/deactivate-provider", headers=USER)
+    r = client.post("/api/core/activate-provider", headers=USER, json={"provider": "magma"})
+    assert r.status_code == 200 and r.json()["username"] == "budiview", r.text
+    g = client.get("/api/core/active-provider", headers=USER)
+    assert g.status_code == 200 and g.json()["provider"] == "magma", g.text
+    print("PASS (e2): setelah deactivate, user biasa activate magma -> 200; GET status 200")
 
 
 def test_f_deactivate_and_double():
@@ -135,17 +151,7 @@ if __name__ == "__main__":
     test_c_switch_to_open5gs_blocked_409()
     test_c2_deactivate_then_switch_ok()
     test_d_invalid_provider_400()
-    # test_e: user biasa activate magma -> 409 (open5gs masih aktif dari c2),
-    # lalu alur deactivate -> activate magma sukses.
-    r = client.post("/api/core/activate-provider", headers=USER, json={"provider": "magma"})
-    assert r.status_code == 409, f"expected 409, got {r.status_code}: {r.text}"
-    print("PASS (e): user biasa activate provider lain saat ada yang aktif -> 409")
-    client.post("/api/core/deactivate-provider", headers=USER)
-    r = client.post("/api/core/activate-provider", headers=USER, json={"provider": "magma"})
-    assert r.status_code == 200 and r.json()["username"] == "budiview", r.text
-    g = client.get("/api/core/active-provider", headers=USER)
-    assert g.status_code == 200 and g.json()["provider"] == "magma", g.text
-    print("PASS (e2): setelah deactivate, user biasa activate magma -> 200; GET status 200")
+    test_e_viewer_forbidden_but_can_read()
     test_f_deactivate_and_double()
     test_g_audit_logged()
     print("\nALL TESTS PASSED")
