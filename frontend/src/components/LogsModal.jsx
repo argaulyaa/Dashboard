@@ -256,11 +256,11 @@ export default function LogsModal({ domain, compId, compName, provider, onClose 
           </div>
         </div>
 
-        {/* Console Log Content Area — polished */}
+        {/* Console Log Content Area — fixed: preserve monospaced table with horizontal scroll */}
         <div
           ref={logRef}
           onScroll={handleScroll}
-          className="flex-1 min-h-[280px] sm:min-h-[360px] overflow-y-auto overflow-x-hidden bg-slate-950 flex flex-col logs-scrollbar"
+          className="flex-1 min-h-[280px] sm:min-h-[360px] overflow-x-auto overflow-y-auto bg-slate-950 logs-scrollbar"
         >
           <style>{`
             .logs-scrollbar { scrollbar-width: thin; scrollbar-color: #334155 #020617; }
@@ -295,12 +295,12 @@ export default function LogsModal({ domain, compId, compName, provider, onClose 
               <p className="text-[11px] text-slate-600 font-mono">{filterText ? `filter: "${filterText}"` : `${lines.length} lines total`}</p>
             </div>
           ) : (
-            <div className="py-1">
-              {/* column header */}
-              <div className="sticky top-0 z-10 flex items-center gap-0 px-0 py-1.5 bg-slate-950/95 backdrop-blur border-b border-slate-800/80 text-[10px] font-semibold tracking-widest uppercase text-slate-500">
-                <span className="w-[3.25rem] sm:w-14 shrink-0 text-right pr-3 select-none">#</span>
-                <span className="w-px self-stretch bg-slate-800/80 shrink-0" />
-                <span className="flex-1 min-w-0 pl-3 pr-4">log output — monospaced · wrap · {filteredLines.length} lines</span>
+            <div className="min-w-max">
+              {/* column header — sticky top, no wrap so table header stays single line */}
+              <div className="sticky top-0 z-10 flex items-center gap-0 py-1.5 bg-slate-950/95 backdrop-blur border-b border-slate-800/80 text-[10px] font-semibold tracking-widest uppercase text-slate-500 whitespace-nowrap">
+                <span className="w-[3.25rem] sm:w-14 shrink-0 sticky left-0 z-10 bg-slate-950/95 backdrop-blur text-right pr-3 select-none">#</span>
+                <span className="w-px self-stretch bg-slate-800/80 shrink-0 sticky left-[3.25rem] sm:left-14 z-10" />
+                <span className="pl-3 pr-4">log output — monospaced · scroll → · {filteredLines.length} lines</span>
               </div>
 
               {filteredLines.map((line, idx) => {
@@ -308,23 +308,24 @@ export default function LogsModal({ domain, compId, compName, provider, onClose 
                 const { ts, rest } = parseLine(line);
                 const lvl = !isHeartbeat ? levelMeta(rest || line) : null;
                 const rowBg = idx % 2 === 0 ? "bg-slate-950" : "bg-slate-900/40";
+                const lineBg = idx % 2 === 0 ? "bg-slate-950" : "bg-slate-900";
                 return (
                   <div
                     key={idx}
-                    className={`flex items-start gap-0 group hover:bg-slate-800/60 border-b border-slate-900/50 last:border-0 ${rowBg} ${isHeartbeat ? "opacity-60" : ""}`}
+                    className={`flex items-start gap-0 group hover:bg-slate-800/60 border-b border-slate-900/50 last:border-0 whitespace-nowrap ${rowBg} ${isHeartbeat ? "opacity-60" : ""}`}
                   >
-                    {/* line number — fixed width prevents overlap */}
-                    <span className="w-[3.25rem] sm:w-14 shrink-0 text-right pr-3 pl-2 py-[5px] text-[11px] font-mono leading-[1.7] text-slate-600 group-hover:text-slate-400 select-none tabular-nums border-r border-slate-800/60 bg-slate-950/40">
+                    {/* line number — sticky left so it stays fixed while text scrolls horizontally */}
+                    <span className={`w-[3.25rem] sm:w-14 shrink-0 sticky left-0 z-[1] text-right pr-3 pl-2 py-[5px] text-[11px] font-mono leading-[1.7] text-slate-600 group-hover:text-slate-400 select-none tabular-nums border-r border-slate-800/60 whitespace-nowrap ${lineBg}`}>
                       {idx + 1}
                     </span>
                     {/* level badge */}
                     {lvl && (
-                      <span className={`hidden sm:inline-flex shrink-0 ml-2 mt-[4px] text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded border leading-none ${lvl.cls}`}>
+                      <span className={`hidden sm:inline-flex shrink-0 ml-2 mt-[4px] text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded border leading-none whitespace-nowrap ${lvl.cls}`}>
                         {lvl.label}
                       </span>
                     )}
-                    {/* message — min-w-0 + break-words + whitespace-pre-wrap prevents overflow/overlap */}
-                    <span className="flex-1 min-w-0 pl-2 sm:pl-3 pr-3 sm:pr-4 py-[5px] font-mono text-[12px] leading-[1.7] whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
+                    {/* message — whitespace-pre keeps single line per entry, monospaced, horizontal scroll instead of wrapping */}
+                    <span className="pl-2 sm:pl-3 pr-6 py-[5px] font-mono text-[12px] leading-[1.7] whitespace-pre select-text">
                       {ts ? (
                         <>
                           <span className="text-slate-500 font-normal">{ts}</span>
