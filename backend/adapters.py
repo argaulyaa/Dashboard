@@ -1472,52 +1472,20 @@ def _build_core_providers() -> dict:
         "adapter": adapter_5gs,
     }
 
-    # --- K8s 5GC (read-only fase 1, via SSH kubectl ke master) ---
-    # Provider baru: data langsung dari cluster (ns 5g-core). Read-only:
-    # restart dinonaktifkan. Aktif hanya kalau K8S_SSH_HOST di-set.
-    from k8s_adapter import SshK8sCoreAdapter
-    k8s_ssh_host = os.environ.get("K8S_SSH_HOST", "") or None
-    if k8s_ssh_host:
-        try:
-            k8s_deploy_map = json.loads(os.environ.get("K8S_CORE_DEPLOYMENTS", ""))
-        except Exception:
-            k8s_deploy_map = None
-        if not isinstance(k8s_deploy_map, dict) or not k8s_deploy_map:
-            import copy
-            k8s_deploy_map = copy.deepcopy(DEFAULT_K8S_CORE_MAP_K8S)
-        adapter_k8s = SshK8sCoreAdapter(
-            deploy_map=k8s_deploy_map,
-            ssh_host=k8s_ssh_host,
-            ssh_user=os.environ.get("K8S_SSH_USER", "telmat"),
-            ssh_password=os.environ.get("K8S_SSH_PASSWORD", ""),
-            ssh_port=int(os.environ.get("K8S_SSH_PORT", "22")),
-            namespace=os.environ.get("K8S_CORE_NAMESPACE", "5g-core"),
-            kubeconfig=os.environ.get("K8S_KUBECONFIG", "/etc/kubernetes/admin.conf"),
-        )
-        k8s_desc = f"OAI 5G Core di Kubernetes ns {adapter_k8s._namespace} (read-only via SSH kubectl)"
-    else:
-        adapter_k8s = CoreAdapter()  # fallback mock
-        k8s_desc = "OAI 5G Core di Kubernetes (mock — K8S_SSH_HOST belum diset)"
-    providers["k8s"] = {
-        "label": "OAI K8s",
-        "icon": "device_hub",  # glyph 'kubernetes' tidak ada di Material Symbols
-        "desc": k8s_desc,
-        "adapter": adapter_k8s,
-    }
-
-    # --- Magma (Orc8R) ---
-    magma_url = os.environ.get("MAGMA_ORC8R_URL", "")
-    magma_adapter = MagmaCoreAdapter(
-        orc8r_url=magma_url,
-        api_key=os.environ.get("MAGMA_API_KEY", ""),
-        network_id=os.environ.get("MAGMA_NETWORK_ID", ""),
-    )
-    providers["magma"] = {
-        "label": "Magma",
-        "icon": "hub",
-        "desc": "Magma AGW via Orchestrator REST API (belum tersambung)",
-        "adapter": magma_adapter,
-    }
+    # --- K8s 5GC & Magma: hidden (2026-08-27) ---
+    # Provider "k8s" (OAI K8s) dan "magma" sengaja TIDAK diregistrasi
+    # agar tab Core hanya menampilkan oai/open5gs (permintaan Ardeezy via Bill).
+    # Kode adapter tetap ada (SshK8sCoreAdapter/MagmaCoreAdapter) untuk dipakai
+    # lagi kapan pun — cukup uncomment blok di bawah dan aktifkan kembali.
+    # --- K8s 5GC (read-only fase 1, via SSH kubectl ke master) - DISABLED ---
+    # from k8s_adapter import SshK8sCoreAdapter
+    # k8s_ssh_host = os.environ.get("K8S_SSH_HOST", "") or None
+    # ... (hidden)
+    # providers["k8s"] = {...}
+    # --- Magma (Orc8R) - DISABLED ---
+    # magma_url = os.environ.get("MAGMA_ORC8R_URL", "")
+    # magma_adapter = MagmaCoreAdapter(...)
+    # providers["magma"] = {...}
 
     return providers
 
