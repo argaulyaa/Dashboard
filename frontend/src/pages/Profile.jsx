@@ -52,7 +52,7 @@ function SessionRow({ label, value, valueClass = "text-on-surface", bold = false
   );
 }
 
-export default function Profile({ currentUser, opsCount = 0, lastTelemetryAt }) {
+export default function Profile({ currentUser, onUserChange, onLogout, opsCount = 0, lastTelemetryAt }) {
   const navigate = useNavigate();
   const [session, setSession] = useState(null);
   const [sessionError, setSessionError] = useState(false);
@@ -138,6 +138,22 @@ export default function Profile({ currentUser, opsCount = 0, lastTelemetryAt }) 
   };
 
   const displayName = profile?.full_name || currentUser || "Admin";
+
+  const handleLogoutClick = () => {
+    if (!window.confirm("Are you sure you want to logout?")) return;
+    // Prefer parent handler (App.jsx::handleLogout clears user+token and reloads)
+    if (typeof onLogout === "function") {
+      onLogout();
+      return;
+    }
+    // Fallback: direct logout then navigate to login and clear full_name state
+    try { logout(); } catch (_) {}
+    if (typeof onUserChange === "function") onUserChange("");
+    setProfile(null);
+    setSession(null);
+    navigate("/login", { replace: true });
+    window.location.reload();
+  };
 
   const saveName = async () => {
     const name = nameValue.trim();
@@ -233,6 +249,17 @@ export default function Profile({ currentUser, opsCount = 0, lastTelemetryAt }) 
             )}
             <p className="font-code-md text-code-md text-on-surface-variant">@{currentUser || "admin"}</p>
             {nameError && <p className="text-error text-xs">{nameError}</p>}
+            <div className="pt-2">
+              <button
+                onClick={handleLogoutClick}
+                aria-label="Logout"
+                title="Logout from dashboard"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-error text-white font-label-lg text-label-lg hover:bg-error/90 active:scale-95 transition-all shadow-sm focus:outline-none focus:ring-2 focus:ring-error/40"
+              >
+                <span className="material-symbols-outlined text-[18px]">logout</span>
+                Logout
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -253,6 +280,29 @@ export default function Profile({ currentUser, opsCount = 0, lastTelemetryAt }) 
                 value={`in ${Math.round(session.remaining_seconds / 60)} min`}
                 valueClass="text-secondary"
               />
+              <div className="pt-4">
+                <button
+                  onClick={handleLogoutClick}
+                  aria-label="Logout from active session"
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-error text-white font-label-md text-label-md hover:bg-error/90 active:scale-[0.98] transition-all shadow-sm focus:outline-none focus:ring-2 focus:ring-error/40"
+                >
+                  <span className="material-symbols-outlined text-[18px]">logout</span>
+                  Logout
+                </button>
+                <p className="text-center text-[11px] text-on-surface-variant/60 mt-2">Sign out and return to login</p>
+              </div>
+            </div>
+          )}
+          {(sessionError || !session) && (
+            <div className="pt-4 mt-4 border-t border-outline-variant/10">
+              <button
+                onClick={handleLogoutClick}
+                aria-label="Logout"
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-error text-white font-label-md text-label-md hover:bg-error/90 active:scale-[0.98] transition-all shadow-sm focus:outline-none focus:ring-2 focus:ring-error/40"
+              >
+                <span className="material-symbols-outlined text-[18px]">logout</span>
+                Logout
+              </button>
             </div>
           )}
         </div>
