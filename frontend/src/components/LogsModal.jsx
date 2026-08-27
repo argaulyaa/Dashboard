@@ -255,12 +255,15 @@ export default function LogsModal({ domain, compId, compName, provider, onClose 
             <p className="text-slate-500 italic text-center py-12">No matching log entries found.</p>
           ) : (
             <div className="space-y-1">
-              {filteredLines.map((line, idx) => (
+              {filteredLines.map((line, idx) => {
+                const isHeartbeat = line.includes("· heartbeat") || (line.includes("heartbeat") && line.includes("waiting for new logs"));
+                return (
                 <div key={idx} className="flex gap-3 hover:bg-slate-900/60 px-2 py-0.5 rounded">
                   <span className="text-slate-600 select-none text-[11px] w-8 text-right shrink-0">{idx + 1}</span>
-                  <span className="break-all whitespace-pre-wrap">{line}</span>
+                  <span className={`break-all whitespace-pre-wrap ${isHeartbeat ? "text-slate-500 italic opacity-70" : ""}`}>{line}</span>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

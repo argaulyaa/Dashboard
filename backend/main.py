@@ -797,12 +797,26 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
         th.start()
 
         async def _pump():
+            last_send = time.time()
             while True:
-                data = await loop.run_in_executor(None, q.get)
+                try:
+                    # Block up to 5s for new log data — on timeout send heartbeat so modal looks alive when NF idle
+                    data = await loop.run_in_executor(None, lambda: q.get(timeout=5))
+                except _queue.Empty:
+                    # No log data in last 5s — heartbeat (only if 5s since last real send)
+                    if time.time() - last_send >= 5:
+                        try:
+                            hb = time.strftime("%H:%M:%S")
+                            await ws.send_text(f"· heartbeat {hb} — waiting for new logs...\n")
+                            last_send = time.time()
+                        except Exception:
+                            break
+                    continue
                 if data is None:
                     break
                 try:
                     await ws.send_text(data.decode(errors="replace"))
+                    last_send = time.time()
                 except Exception:
                     break
 
