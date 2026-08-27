@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-08-28 - Fix Overview: honest metrics (hapus mock bandwidth & latency hardcoded)
+
+### Audit (Before)
+- **4 MetricCards di `frontend/src/pages/Overview.jsx:202-207`**: 
+  - `Nodes Online` `${healthyCount}/${total}` → **real** (derived WS `allComponents` status).
+  - `Active Sessions` `reservedComponents.length` → **real** tapi label misleading (seharusnya Reservations).
+  - `Total Bandwidth` `${domainsWithIssues}/3` → **fake** (hitung domain bermasalah, bukan Mbps; icon warning menipu terlihat bandwidth).
+  - `Latency (Avg)` `3s` → **hardcoded** (string literal, tidak ada sumber telemetry).
+- `NetworkTopologyMap` judul "Live visual of gNB and UPF connections" tanpa disclaimer — padahal SVG schematic 3 node (CORE/RAN/RIC) bukan live fiber/geo — **mock tapi tak berlabel**.
+- `DomainCards` Core/RAN/RIC: health/uptime sudah derived `domainHealth()` + `started_at` (real via adapters), namun RIC (FlexRIC mock) tampil identik Core/RAN tanpa badge mock — **potensi misleading**.
+- `Recent Activity` `buildActivity()` derived status+reservation → real summary, tapi belum audit-log.
+
+### Fix (After) — commit `a702cdf` → helm `oran` rev63 ns `dashboard`
+- `Overview.jsx`: Hapus `domainsWithIssues` + 2 card palsu; grid `md:grid-cols-4` → `md:grid-cols-3`. **3 card jujur**: 
+  1. `Nodes Online` `healthy/total` (router, text-primary) — real.
+  2. `Active Reservations` `reservedComponents.length` (lock, text-secondary) — real, label diperjelas.
+  3. `System Health` `healthLabel` (System Normal / Partially Degraded / System Issue, monitor_heart, `healthText` color) — derived `overallHealth` real.
+  Komentar ` {/* Metrik ringkas — hanya data nyata, tanpa mock bandwidth/latency */}`.
+- `DomainCard`: var `isMock = domainKey === "ric"` → RIC badge `mock`, uptime `· mock`, subtitle `· illustrative`. Core/RAN tetap real tanpa badge.
+- `NetworkTopologyMap.jsx`: header `Network Topology` + badge `Mock topology — illustrative`; subtitle `Schematic CORE–RAN–RIC links (not to scale; health colors are real)`. Health colors tetap real via `domainHealth(core/ran/ric)`.
+- `Recent Activity`: **keep** (real-time status summary); roadmap: feed `audit-logs` nanti, untuk sekarang simple honest.
+- Build `vite` PASS: `index-D19bF_6v.js` 631kB; `grep dist` no `Total Bandwidth`/`3s` latency, has `System Health` + `Mock topology — illustrative` + `mock` badge verified. Pods `oran-backend-5fd994b578-q5b2h` + `oran-frontend-f46db44-6xvrv` Running rev63, image tag `a702cdf60a1442378bb71ccb61a4835261595c16`.
+- Helm: `helm upgrade oran ./deploy/helm/oran-dashboard -n dashboard -f /home/github-runner/oran-{smtp,k8s}-values.yaml --set image.tag=a702cdf...` — `rollback 60` → `rev63 deployed` verified `healthy` + `ImagePull` OK (ghcr images already pushed by CI).
+
+### Verification
+- `npm run build` exit 0, no `domainsWithIssues`, no hardcoded `3s`.
+- `helm list -n dashboard` rev63 deployed, `kubectl get pods -n dashboard` 2/2 Running, `/api/health` ok, frontend serve `index-D19bF_6v.js`.
+- Manual reverted dummy sha `a702cdf2f7e8...` ImagePullBackOff → rollback then correct sha upgrade proven.
+
 ## 2026-08-26 - Deploy LIVE Fase1: provider core `oai` baca state K8s 5G testbed
 
 ### Hasil deploy (rev31, helm release `oran`, ns `dashboard`)
