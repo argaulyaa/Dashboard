@@ -167,6 +167,24 @@ export async function fetchComponentLogs(domain, compId, provider = null, tail =
   return res.json();
 }
 
+// ---- LIVE logs via WebSocket ----
+// Helper: build WS URL for logs streaming per provider
+export function getLogsLiveUrl(domain, provider, compId, tail = 100) {
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  const host =
+    window.location.port === "5173"
+      ? `${window.location.hostname}:8000`
+      : window.location.host;
+  const prov = provider || "oai";
+  return `${proto}://${host}/ws/logs/${encodeURIComponent(domain)}/${encodeURIComponent(prov)}/${encodeURIComponent(compId)}?tail=${encodeURIComponent(tail)}`;
+}
+
+// Open live logs WebSocket; returns WebSocket instance
+export function openLogsSocket(domain, provider, compId, tail = 100) {
+  const url = getLogsLiveUrl(domain, provider, compId, tail);
+  return new WebSocket(url);
+}
+
 export function openTelemetrySocket(onSnapshot) {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const token = getToken();

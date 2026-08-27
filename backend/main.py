@@ -9,11 +9,14 @@ import time
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Header
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from ssh_proxy import run_ssh_bridge
-from adapters import DOMAIN_PROVIDERS
+from adapters import DOMAIN_PROVIDERS, DEFAULT_OAI_K8S_COMPONENT_MAP
+import shlex
+import threading
+import queue as _queue
 import reservations
 from database import get_db_session
 from models import AuditLogModel, UserModel, ActiveProviderModel
@@ -550,6 +553,309 @@ def get_component_logs(domain: str, comp_id: str, provider: str = None, tail: in
     else:
         logs = f"Logs feature not supported by provider adapter for component '{comp_id}'."
     return {"domain": domain, "component_id": comp_id, "tail": tail, "logs": logs}
+
+
+# ---------------------------------------------------------------------------
+# LIVE logs streaming via WebSocket (per provider)
+# GET /ws/logs/{domain}/{provider}/{compId}?tail=100
+# Reuses ssh_proxy pattern but exec kubectl/docker logs -f via SSH to master/core.
+# Keeps existing REST for fallback.
+# ---------------------------------------------------------------------------
+def _sh_quote(s: str) -> str:
+    try:
+        return shlex.quote(str(s))
+    except Exception:
+        return "'" + str(s).replace("'", "'\\''") + "'"
+
+
+@app.websocket("/ws/logs/{domain}/{provider}/{compId}")
+async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
+    await ws.accept()
+    # tail from query
+    tail_raw = ws.query_params.get("tail", "100")
+    try:
+        tail = int(tail_raw)
+    except Exception:
+        tail = 100
+    tail = max(10, min(tail, 2000))
+
+    if domain not in DOMAINS:
+        await ws.send_text(f"[error] unknown domain '{domain}'\n")
+        await ws.close()
+        return
+    if provider not in DOMAINS[domain]:
+        await ws.send_text(f"[error] unknown provider '{provider}' for domain '{domain}'\n")
+        await ws.close()
+        return
+    try:
+        adapter = _get_adapter(domain, provider)
+    except HTTPException as e:
+        await ws.send_text(f"[error] {e.detail}\n")
+        await ws.close()
+        return
+
+    # Validate compId exists (soft — still allow streaming attempt for debugging)
+    comp = None
+    try:
+        if hasattr(adapter, "get"):
+            comp = adapter.get(compId)
+    except Exception:
+        comp = None
+    if comp is None and hasattr(adapter, "_map"):
+        m = getattr(adapter, "_map", {})
+        # For k8s adapter _map values may be dict, for docker str
+        if isinstance(m, dict) and compId not in m:
+            # Check DEFAULT fallback mapping for core oai/open5gs
+            if domain == "core" and compId not in DEFAULT_OAI_K8S_COMPONENT_MAP and compId not in ("mysql", "ext-dn"):
+                await ws.send_text(f"[warn] component '{compId}' not in map, trying anyway...\n")
+
+    # ---- Determine SSH target + log command ----
+    ssh_host = ssh_port = ssh_user = ssh_password = sudo_password = None
+    kubeconfig = "/etc/kubernetes/admin.conf"
+    namespace = "5g-core"
+    inner_cmd = None
+    mode = None
+
+    if domain == "core" and provider in ("oai", "open5gs", "k8s"):
+        # Prefer K8s via master (master holds admin.conf)
+        k8s_host = os.environ.get("OAI_K8S_SSH_HOST", "") or os.environ.get("K8S_SSH_HOST", "")
+        # Task requires default master 10.91.2.156 if env missing for K8s providers
+        if not k8s_host:
+            k8s_host = "10.91.2.156"
+        # If we have a K8s host, use kubectl logs -f path
+        # Resolve prefix / deploy name for this component
+        prefix = DEFAULT_OAI_K8S_COMPONENT_MAP.get(compId, compId)
+        # Override from adapter's map if available
+        try:
+            if hasattr(adapter, "_map") and compId in getattr(adapter, "_map", {}):
+                v = adapter._map[compId]
+                if isinstance(v, dict):
+                    prefix = v.get("deploy") or v.get("prefix") or prefix
+                elif isinstance(v, str):
+                    prefix = v
+            # SshK8sCoreAdapter stores deploy_map with namespace/kubeconfig hints
+            if hasattr(adapter, "_namespace"):
+                namespace = getattr(adapter, "_namespace") or namespace
+            if hasattr(adapter, "_ns"):
+                namespace = getattr(adapter, "_ns") or namespace
+            if hasattr(adapter, "_kubeconfig"):
+                kubeconfig = getattr(adapter, "_kubeconfig") or kubeconfig
+            # Env overrides
+            namespace = os.environ.get("OAI_K8S_NAMESPACE", namespace)
+            kubeconfig = os.environ.get("OAI_K8S_ADMIN_CONF", kubeconfig)
+            if provider == "k8s":
+                namespace = os.environ.get("K8S_CORE_NAMESPACE", namespace)
+                kubeconfig = os.environ.get("K8S_KUBECONFIG", kubeconfig)
+        except Exception:
+            pass
+
+        ssh_host = k8s_host
+        ssh_port = int(os.environ.get("OAI_K8S_SSH_PORT", os.environ.get("K8S_SSH_PORT", "22")) or 22)
+        ssh_user = os.environ.get("OAI_K8S_SSH_USER", os.environ.get("K8S_SSH_USER", "telmat")) or "telmat"
+        ssh_password = os.environ.get("OAI_K8S_SSH_PASSWORD", os.environ.get("K8S_SSH_PASSWORD", "")) or os.environ.get("K8S_SUDO_PASSWORD", "123")
+        sudo_password = os.environ.get("K8S_SUDO_PASSWORD", "") or ssh_password or "123"
+
+        kctl = f"kubectl --kubeconfig={kubeconfig}"
+        # For k8s provider SshK8sCoreAdapter uses deployment logs; keep compatibility:
+        # Use label selector app=prefix for oai/open5gs, deployment for k8s
+        if provider == "k8s":
+            # deployment logs follow
+            inner_cmd = f"{kctl} -n {namespace} logs -f --tail={tail} --timestamps deployment/{prefix} 2>&1"
+        else:
+            # Resolve pod name via -l app=prefix then logs -f that pod (works even if multiple pods, picks first)
+            inner_cmd = (
+                f"pod=$({kctl} -n {namespace} get pods -l app={_sh_quote(prefix)} -o jsonpath='{{{{.items[0].metadata.name}}}}' 2>/dev/null); "
+                f"if [ -z \"$pod\" ]; then "
+                f"  echo \"[logs] pod not found for app={prefix} in ns {namespace} — listing pods:\"; "
+                f"  {kctl} -n {namespace} get pods -o wide --no-headers 2>&1 | head -20; "
+                f"  echo \"[hint] trying deployment logs fallback...\"; "
+                f"  {kctl} -n {namespace} logs -f --tail={tail} --timestamps deployment/{prefix} 2>&1; "
+                f"  exit 0; "
+                f"fi; "
+                f"{kctl} -n {namespace} logs -f --tail={tail} --timestamps $pod 2>&1"
+            )
+        mode = "k8s"
+    elif domain == "core":
+        # Legacy docker via SSH to core node
+        ssh_host = os.environ.get("OAI_SSH_HOST", "10.91.2.151")
+        ssh_port = int(os.environ.get("OAI_SSH_PORT", "22") or 22)
+        ssh_user = os.environ.get("OAI_SSH_USER", "core") or "core"
+        ssh_password = os.environ.get("OAI_SSH_PASSWORD", "telmat123") or "telmat123"
+        sudo_password = ""
+        container = compId
+        try:
+            if hasattr(adapter, "_map") and compId in adapter._map:
+                v = adapter._map[compId]
+                container = v if isinstance(v, str) else v.get("deploy", compId)
+            else:
+                raw = os.environ.get("OAI_CORE_CONTAINERS", "")
+                if raw:
+                    import json as _j
+                    m = _j.loads(raw)
+                    container = m.get(compId, compId)
+        except Exception:
+            pass
+        inner_cmd = f"docker logs -f --tail {tail} --timestamps {_sh_quote(container)} 2>&1"
+        mode = "docker"
+    elif domain == "ran":
+        ssh_host = os.environ.get("OAI_SSH_RAN_HOST", os.environ.get("SRSRAN_SSH_HOST", "10.91.2.152"))
+        ssh_port = int(os.environ.get("OAI_SSH_RAN_PORT", os.environ.get("SRSRAN_SSH_PORT", "22")) or 22)
+        ssh_user = os.environ.get("OAI_SSH_RAN_USER", os.environ.get("SRSRAN_SSH_USER", "ran")) or "ran"
+        ssh_password = os.environ.get("OAI_SSH_RAN_PASSWORD", os.environ.get("SRSRAN_SSH_PASSWORD", "telmat123")) or "telmat123"
+        sudo_password = ""
+        log_path = "/home/ran/srsgnb.log"
+        try:
+            if hasattr(adapter, "_cfg") and isinstance(getattr(adapter, "_cfg"), dict):
+                log_path = adapter._cfg.get("log", log_path)
+        except Exception:
+            pass
+        inner_cmd = f"tail -n {tail} -F {_sh_quote(log_path)} 2>&1 || tail -n {tail} -F /home/ran/gnb.log 2>&1 || tail -n {tail} -F /home/ran/*.log 2>&1"
+        mode = "ran"
+    else:
+        # RIC / mock — no live backend, fallback to snapshot via REST (send once and close)
+        try:
+            if hasattr(adapter, "get_logs"):
+                txt = adapter.get_logs(compId, tail=tail)
+                await ws.send_text(txt)
+        except Exception as e:
+            await ws.send_text(f"[error] {e}\n")
+        await ws.close()
+        return
+
+    # Wrap K8s inner with sudo (admin.conf root-only 600)
+    if mode == "k8s" and sudo_password:
+        full_cmd = f"echo {_sh_quote(sudo_password)} | sudo -S -p '' bash -c {_sh_quote(inner_cmd)}"
+    else:
+        full_cmd = inner_cmd
+
+    # ---- SSH connect + stream to WS ----
+    client = None
+    channel = None
+    try:
+        import paramiko
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # Run connect in thread to avoid blocking event loop
+        loop = asyncio.get_running_loop()
+        def _connect():
+            client.connect(
+                hostname=ssh_host,
+                port=ssh_port,
+                username=ssh_user,
+                password=ssh_password,
+                timeout=10,
+                banner_timeout=10,
+                auth_timeout=10,
+                allow_agent=False,
+                look_for_keys=False,
+            )
+        await loop.run_in_executor(None, _connect)
+        await ws.send_text(f"[connected] streaming {mode} logs for {domain}/{provider}/{compId} tail={tail} via {ssh_host}...\n")
+        # Exec command — get channel for streaming
+        transport = client.get_transport()
+        if transport is None:
+            raise RuntimeError("SSH transport not available")
+        channel = transport.open_session()
+        channel.exec_command(full_cmd)
+        # Streaming pump: read from channel and forward to WS
+        q: _queue.Queue = _queue.Queue()
+
+        stop_evt = threading.Event()
+
+        def _reader():
+            try:
+                while not stop_evt.is_set():
+                    if channel.exit_status_ready():
+                        # drain remaining
+                        while channel.recv_ready():
+                            data = channel.recv(4096)
+                            if data:
+                                q.put(data)
+                        while channel.recv_stderr_ready():
+                            data = channel.recv_stderr(4096)
+                            if data:
+                                q.put(data)
+                        break
+                    if channel.recv_ready():
+                        data = channel.recv(4096)
+                        if data:
+                            q.put(data)
+                    elif channel.recv_stderr_ready():
+                        data = channel.recv_stderr(4096)
+                        if data:
+                            q.put(data)
+                    else:
+                        # Avoid busy loop
+                        stop_evt.wait(0.05)
+                # Signal EOF
+                q.put(None)
+            except Exception as e:
+                q.put(f"\n[reader error] {e}\n".encode())
+                q.put(None)
+
+        th = threading.Thread(target=_reader, daemon=True)
+        th.start()
+
+        async def _pump():
+            while True:
+                data = await loop.run_in_executor(None, q.get)
+                if data is None:
+                    break
+                try:
+                    await ws.send_text(data.decode(errors="replace"))
+                except Exception:
+                    break
+
+        pump_task = asyncio.create_task(_pump())
+
+        # Also handle client close — wait for ws receive or pump done
+        try:
+            while True:
+                # If pump done, break
+                if pump_task.done():
+                    break
+                # Wait for WS message with timeout to detect disconnect
+                try:
+                    # Use wait_for to periodically check pump
+                    msg = await asyncio.wait_for(ws.receive_text(), timeout=0.5)
+                    # Client may send ping/close — ignore, but if "close" break
+                    if msg.strip().lower() in ("close", "exit", "quit"):
+                        break
+                except asyncio.TimeoutError:
+                    continue
+                except (WebSocketDisconnect, RuntimeError):
+                    break
+        finally:
+            stop_evt.set()
+            pump_task.cancel()
+            try:
+                await pump_task
+            except asyncio.CancelledError:
+                pass
+
+    except Exception as e:
+        try:
+            await ws.send_text(f"[SSH error] {e}\n")
+        except Exception:
+            pass
+    finally:
+        try:
+            if channel is not None:
+                try:
+                    channel.close()
+                except Exception:
+                    pass
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            await ws.close()
+        except Exception:
+            pass
 
 
 # ---- Reservation endpoints (scheduled time-slots) ----

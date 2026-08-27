@@ -384,7 +384,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
             {/* 2) View Logs */}
             <button
               className="px-6 py-2.5 border border-outline-variant text-on-surface font-bold rounded-lg hover:bg-surface-container-low transition-colors flex items-center gap-2"
-              onClick={() => hero && setLogTarget({ domain: "core", compId: hero.id, compName: hero.name })}
+              onClick={() => hero && setLogTarget({ domain: "core", compId: hero.id, compName: hero.name, provider: activeProvider })}
             >
               <span className="material-symbols-outlined text-lg">subject</span>
               View Logs
@@ -426,6 +426,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
             domain={logTarget.domain}
             compId={logTarget.compId}
             compName={logTarget.compName}
+            provider={logTarget.provider}
             onClose={() => setLogTarget(null)}
           />
         )}

@@ -390,7 +390,7 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
                 {/* 2) View Logs */}
                 <button
                   className="px-6 py-2.5 border border-outline-variant text-on-surface font-bold text-label-lg rounded-lg hover:bg-surface-container-highest transition-colors flex items-center gap-2"
-                  onClick={() => hero && setLogTarget({ domain: "ran", compId: hero.id, compName: hero.name })}
+                  onClick={() => hero && setLogTarget({ domain: "ran", compId: hero.id, compName: hero.name, provider: activeProvider })}
                 >
                   <span className="material-symbols-outlined text-lg">subject</span>
                   View Logs
@@ -436,6 +436,7 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
               domain={logTarget.domain}
               compId={logTarget.compId}
               compName={logTarget.compName}
+              provider={logTarget.provider}
               onClose={() => setLogTarget(null)}
             />
           )}

@@ -211,7 +211,7 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
           <div className="mt-6 flex justify-end items-center gap-3">
             <button
               className="flex items-center gap-2 px-6 py-2.5 border border-outline-variant text-on-surface rounded-lg hover:bg-surface-container transition-colors font-bold text-sm"
-              onClick={() => hero && setLogTarget({ domain: "ric", compId: hero.id, compName: hero.name })}
+              onClick={() => hero && setLogTarget({ domain: "ric", compId: hero.id, compName: hero.name, provider: activeProvider || "oai" })}
             >
               <span className="material-symbols-outlined text-lg">subject</span>
               View Logs
@@ -243,6 +243,7 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
             domain={logTarget.domain}
             compId={logTarget.compId}
             compName={logTarget.compName}
+            provider={logTarget.provider}
             onClose={() => setLogTarget(null)}
           />
         )}
