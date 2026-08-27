@@ -92,7 +92,7 @@ database:
 persistence:
   enabled: true
   size: 1Gi
-  # storageClass: ""   # required if your cluster has no default StorageClass
+  storageClass: "nfs-open5gs"
 
 frontend:
   replicas: 1
