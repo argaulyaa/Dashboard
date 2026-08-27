@@ -14,6 +14,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from ssh_proxy import run_ssh_bridge
 from adapters import DOMAIN_PROVIDERS, DEFAULT_OAI_K8S_COMPONENT_MAP
+
+# Map untuk open5gs: deployment prefix per component (helm chart open5gs-chart -> open5gs-amf)
+# dipakai ws_logs untuk open5gs agar tidak salah pakai prefix oai-amf / ns 5g-core
+DEFAULT_OPEN5GS_K8S_COMPONENT_MAP = {
+    "amf": "open5gs-amf",
+    "smf": "open5gs-smf",
+    "upf": "open5gs-upf",
+    "ausf": "open5gs-ausf",
+    "nrf": "open5gs-nrf",
+    "udm": "open5gs-udm",
+    "udr": "open5gs-udr",
+    "pcf": "open5gs-pcf",
+    "bsf": "open5gs-bsf",
+    "nssf": "open5gs-nssf",
+    "scp": "open5gs-scp",
+    "sepp": "open5gs-sepp",
+    "mongodb": "open5gs-mongodb",
+    "mysql": "open5gs-mongodb",
+}
 import shlex
 import threading
 import queue as _queue
@@ -605,8 +624,16 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
         m = getattr(adapter, "_map", {})
         # For k8s adapter _map values may be dict, for docker str
         if isinstance(m, dict) and compId not in m:
-            # Check DEFAULT fallback mapping for core oai/open5gs
-            if domain == "core" and compId not in DEFAULT_OAI_K8S_COMPONENT_MAP and compId not in ("mysql", "ext-dn"):
+            # Check DEFAULT fallback mapping for core oai/open5gs — provider-aware
+            _is_known = False
+            if domain == "core":
+                if provider == "open5gs":
+                    _is_known = compId in DEFAULT_OPEN5GS_K8S_COMPONENT_MAP or compId in ("mysql", "ext-dn")
+                elif provider == "oai":
+                    _is_known = compId in DEFAULT_OAI_K8S_COMPONENT_MAP or compId in ("mysql", "ext-dn")
+                else:
+                    _is_known = (compId in DEFAULT_OAI_K8S_COMPONENT_MAP or compId in DEFAULT_OPEN5GS_K8S_COMPONENT_MAP or compId in ("mysql", "ext-dn"))
+            if domain == "core" and not _is_known:
                 await ws.send_text(f"[warn] component '{compId}' not in map, trying anyway...\n")
 
     # ---- Determine SSH target + log command ----
@@ -617,37 +644,91 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
     mode = None
 
     if domain == "core" and provider in ("oai", "open5gs", "k8s"):
-        # Prefer K8s via master (master holds admin.conf)
+        # Prefer K8s via master (master holds admin.conf) — provider-aware ns/prefix
         k8s_host = os.environ.get("OAI_K8S_SSH_HOST", "") or os.environ.get("K8S_SSH_HOST", "")
-        # Task requires default master 10.91.2.156 if env missing for K8s providers
         if not k8s_host:
             k8s_host = "10.91.2.156"
-        # If we have a K8s host, use kubectl logs -f path
-        # Resolve prefix / deploy name for this component
-        prefix = DEFAULT_OAI_K8S_COMPONENT_MAP.get(compId, compId)
-        # Override from adapter's map if available
-        try:
-            if hasattr(adapter, "_map") and compId in getattr(adapter, "_map", {}):
-                v = adapter._map[compId]
-                if isinstance(v, dict):
-                    prefix = v.get("deploy") or v.get("prefix") or prefix
-                elif isinstance(v, str):
-                    prefix = v
-            # SshK8sCoreAdapter stores deploy_map with namespace/kubeconfig hints
-            if hasattr(adapter, "_namespace"):
-                namespace = getattr(adapter, "_namespace") or namespace
-            if hasattr(adapter, "_ns"):
-                namespace = getattr(adapter, "_ns") or namespace
-            if hasattr(adapter, "_kubeconfig"):
-                kubeconfig = getattr(adapter, "_kubeconfig") or kubeconfig
-            # Env overrides
-            namespace = os.environ.get("OAI_K8S_NAMESPACE", namespace)
-            kubeconfig = os.environ.get("OAI_K8S_ADMIN_CONF", kubeconfig)
-            if provider == "k8s":
+        # Resolve prefix / deploy name per provider
+        if provider == "open5gs":
+            # open5gs: use dedicated map, never oai-amf
+            prefix = DEFAULT_OPEN5GS_K8S_COMPONENT_MAP.get(compId, f"open5gs-{compId}")
+            try:
+                if hasattr(adapter, "_map") and compId in getattr(adapter, "_map", {}):
+                    v = adapter._map[compId]
+                    if isinstance(v, dict):
+                        prefix = v.get("deploy") or v.get("prefix") or prefix
+                    elif isinstance(v, str):
+                        # docker container name fallback still maps to k8s deploy if it looks like open5gs-*
+                        if v.startswith("open5gs-") or v.startswith("oai-"):
+                            # prefer mapped prefix already computed for open5gs
+                            pass
+                        else:
+                            prefix = v
+                # open5gs never inherits OAI namespace — use OPEN5GS namespace env
+                # priority: OPEN5GS_K8S_NAMESPACE > OPEN5GS_NAMESPACE > open5gs-chart (helm release)
+                # do not use OAI_K8S_NAMESPACE for open5gs (bug root)
+                if hasattr(adapter, "_namespace"):
+                    # only use adapter namespace if it looks like open5gs-*
+                    _ns = getattr(adapter, "_namespace")
+                    if _ns and "open5gs" in _ns:
+                        namespace = _ns
+                if hasattr(adapter, "_ns"):
+                    _ns2 = getattr(adapter, "_ns")
+                    if _ns2 and "open5gs" in _ns2:
+                        namespace = _ns2
+                # Env overrides — OPEN5GS specific first
+                _open5gs_ns = os.environ.get("OPEN5GS_K8S_NAMESPACE", "") or os.environ.get("OPEN5GS_NAMESPACE", "")
+                if _open5gs_ns:
+                    namespace = _open5gs_ns
+                else:
+                    # default helm release namespace; distinguish chart vs v2 at runtime in inner_cmd
+                    namespace = "open5gs-chart"
+                # kubeconfig for open5gs may share admin.conf
+                kubeconfig = os.environ.get("OPEN5GS_K8S_ADMIN_CONF", "") or os.environ.get("OAI_K8S_ADMIN_CONF", kubeconfig)
+                if hasattr(adapter, "_kubeconfig") and "open5gs" in namespace:
+                    kubeconfig = getattr(adapter, "_kubeconfig") or kubeconfig
+            except Exception:
+                pass
+        elif provider == "oai":
+            prefix = DEFAULT_OAI_K8S_COMPONENT_MAP.get(compId, compId)
+            try:
+                if hasattr(adapter, "_map") and compId in getattr(adapter, "_map", {}):
+                    v = adapter._map[compId]
+                    if isinstance(v, dict):
+                        prefix = v.get("deploy") or v.get("prefix") or prefix
+                    elif isinstance(v, str):
+                        prefix = v
+                if hasattr(adapter, "_namespace"):
+                    namespace = getattr(adapter, "_namespace") or namespace
+                if hasattr(adapter, "_ns"):
+                    namespace = getattr(adapter, "_ns") or namespace
+                if hasattr(adapter, "_kubeconfig"):
+                    kubeconfig = getattr(adapter, "_kubeconfig") or kubeconfig
+                namespace = os.environ.get("OAI_K8S_NAMESPACE", namespace)
+                kubeconfig = os.environ.get("OAI_K8S_ADMIN_CONF", kubeconfig)
+            except Exception:
+                pass
+        else:  # provider == "k8s"
+            prefix = DEFAULT_OAI_K8S_COMPONENT_MAP.get(compId, compId)
+            try:
+                if hasattr(adapter, "_map") and compId in getattr(adapter, "_map", {}):
+                    v = adapter._map[compId]
+                    if isinstance(v, dict):
+                        prefix = v.get("deploy") or v.get("prefix") or prefix
+                    elif isinstance(v, str):
+                        prefix = v
+                if hasattr(adapter, "_namespace"):
+                    namespace = getattr(adapter, "_namespace") or namespace
+                if hasattr(adapter, "_ns"):
+                    namespace = getattr(adapter, "_ns") or namespace
+                if hasattr(adapter, "_kubeconfig"):
+                    kubeconfig = getattr(adapter, "_kubeconfig") or kubeconfig
+                namespace = os.environ.get("OAI_K8S_NAMESPACE", namespace)
+                kubeconfig = os.environ.get("OAI_K8S_ADMIN_CONF", kubeconfig)
                 namespace = os.environ.get("K8S_CORE_NAMESPACE", namespace)
                 kubeconfig = os.environ.get("K8S_KUBECONFIG", kubeconfig)
-        except Exception:
-            pass
+            except Exception:
+                pass
 
         ssh_host = k8s_host
         ssh_port = int(os.environ.get("OAI_K8S_SSH_PORT", os.environ.get("K8S_SSH_PORT", "22")) or 22)
@@ -656,13 +737,33 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
         sudo_password = os.environ.get("K8S_SUDO_PASSWORD", "") or ssh_password or "123"
 
         kctl = f"kubectl --kubeconfig={kubeconfig}"
-        # For k8s provider SshK8sCoreAdapter uses deployment logs; keep compatibility:
-        # Use label selector app=prefix for oai/open5gs, deployment for k8s
         if provider == "k8s":
-            # deployment logs follow
             inner_cmd = f"{kctl} -n {namespace} logs -f --tail={tail} --timestamps deployment/{prefix} 2>&1"
+        elif provider == "open5gs":
+            # open5gs helm chart uses label app.kubernetes.io/name=<compId> (e.g. amf) and deploy open5gs-amf
+            # open5gs-v2 legacy uses label app=open5gs-amf
+            # need to distinguish ns open5gs-chart vs open5gs-v2 at runtime
+            inner_cmd = (
+                f"NS={_sh_quote(namespace)}; DEP={_sh_quote(prefix)}; LBL={_sh_quote(compId)}; "
+                f"if ! {kctl} -n $NS get deploy $DEP >/dev/null 2>&1; then "
+                f"  if {kctl} -n open5gs-v2 get deploy $DEP >/dev/null 2>&1; then NS=open5gs-v2; "
+                f"  elif {kctl} -n open5gs get deploy $DEP >/dev/null 2>&1; then NS=open5gs; "
+                f"  fi; "
+                f"fi; "
+                f"pod=$({kctl} -n $NS get pods -l app.kubernetes.io/name=$LBL -o jsonpath='{{{{.items[0].metadata.name}}}}' 2>/dev/null); "
+                f"if [ -z \"$pod\" ]; then pod=$({kctl} -n $NS get pods -l app=$DEP -o jsonpath='{{{{.items[0].metadata.name}}}}' 2>/dev/null); fi; "
+                f"if [ -z \"$pod\" ]; then pod=$({kctl} -n $NS get pods -l app.kubernetes.io/name=$LBL,app.kubernetes.io/instance=open5gs-chart -o jsonpath='{{{{.items[0].metadata.name}}}}' 2>/dev/null); fi; "
+                f"if [ -z \"$pod\" ]; then "
+                f"  echo \"[logs] pod not found for app.kubernetes.io/name=$LBL (deploy $DEP) in ns $NS — listing pods:\"; "
+                f"  {kctl} -n $NS get pods -o wide --no-headers 2>&1 | head -20; "
+                f"  echo \"[hint] trying deployment logs fallback (ns $NS deploy $DEP)...\"; "
+                f"  {kctl} -n $NS logs -f --tail={tail} --timestamps deployment/$DEP 2>&1; "
+                f"  exit 0; "
+                f"fi; "
+                f"{kctl} -n $NS logs -f --tail={tail} --timestamps $pod 2>&1"
+            )
         else:
-            # Resolve pod name via -l app=prefix then logs -f that pod (works even if multiple pods, picks first)
+            # oai: label app=oai-amf in ns 5g-core
             inner_cmd = (
                 f"pod=$({kctl} -n {namespace} get pods -l app={_sh_quote(prefix)} -o jsonpath='{{{{.items[0].metadata.name}}}}' 2>/dev/null); "
                 f"if [ -z \"$pod\" ]; then "
