@@ -90,7 +90,7 @@ database:
   url: "sqlite:////data/oran_dashboard.db"
 
 persistence:
-  enabled: false
+  enabled: true
   size: 1Gi
   # storageClass: ""   # required if your cluster has no default StorageClass
 

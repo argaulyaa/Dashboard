@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider, providerLabel } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
+import CoreRanConnectBar from "../components/CoreRanConnectBar.jsx";
 import { usePageHeader } from "../components/PageHeaderContext.jsx";
 
 const STATUS_DOT = {
@@ -235,6 +236,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
 
   return (
     <div className="max-w-[1400px] mx-auto">
+      <CoreRanConnectBar />
       {/* Baris atas: provider tabs (kiri) + kotak Current Operator (kanan).
           Revisi owner t_6c29abe5: judul halaman pindah ke sticky TopBar
           (via usePageHeader), kotak operator pindah ke sini sejajar tabs. */}

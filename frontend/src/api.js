@@ -301,3 +301,34 @@ export async function resendOtp(username) {
   if (!res.ok) throw new Error("resend_failed");
   return res.json();
 }
+
+// ---- Hybrid Core↔RAN connect ----
+export async function fetchRanStatus() {
+  const res = await fetch(`${BASE}/ran/status`, { headers: authHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(typeof data.detail === "string" ? data.detail : "fetchRanStatus_failed");
+    err.payload = data?.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+export async function connectRan(coreProvider, ranProvider, dryRun = false) {
+  const res = await fetch(`${BASE}/ran/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ core_provider: coreProvider, ran_provider: ranProvider, dry_run: dryRun }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || data);
+    const err = new Error(msg || "connect_failed");
+    err.payload = data?.detail;
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
