@@ -99,6 +99,7 @@ function DomainCard({ domainKey, components, onSelect, nowSeconds }) {
   const health = domainHealth(components);
   const problem = components.find((c) => c.status !== "healthy");
   const uptime = domainUptimeSeconds(components, nowSeconds);
+  const isMock = domainKey === "ric"; // RIC masih mock — belum konek testbed real
 
   return (
     <div className={`bg-white p-6 rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border-t-4 ${ACCENT_BORDER[domainKey]}`}>
@@ -108,10 +109,10 @@ function DomainCard({ domainKey, components, onSelect, nowSeconds }) {
           {HEALTH_LABEL[health]}
         </span>
       </div>
-      <h4 className="font-title-lg text-title-lg mb-1">{meta.title}</h4>
-      <p className="text-body-md text-on-surface-variant mb-1">Uptime: {formatUptime(uptime)}</p>
+      <h4 className="font-title-lg text-title-lg mb-1">{meta.title} {isMock && <span className="text-label-sm font-normal text-on-surface-variant border border-outline-variant px-1.5 py-0.5 rounded ml-1 align-middle">mock</span>}</h4>
+      <p className="text-body-md text-on-surface-variant mb-1">Uptime: {formatUptime(uptime)}{isMock ? " · mock" : ""}</p>
       <p className="text-body-md text-on-surface-variant mb-4">
-        {meta.subtitle} &middot; {components.length} components
+        {meta.subtitle} &middot; {components.length} components{isMock ? " · illustrative" : ""}
       </p>
       <div className="flex flex-col gap-2">
         <Link className="text-primary hover:underline font-label-lg flex items-center gap-1" to={`/${domainKey}`}>
@@ -150,8 +151,6 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
     : allComponents.some((c) => c.status === "degraded")
     ? "degraded"
     : "healthy";
-  const domainsWithIssues = ["core", "ran", "ric"].filter((k) => domainHealth(data[k]) !== "healthy").length;
-
   const reservedComponents = allComponents.filter((c) => c.reservation?.active);
   const activity = buildActivity(allComponents);
   const systemUptime = domainUptimeSeconds(allComponents, now.getTime() / 1000);
@@ -198,12 +197,11 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
         </div>
       </div>
 
-      {/* Metrik ringkas */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-gutter mb-8">
+      {/* Metrik ringkas — hanya data nyata, tanpa mock bandwidth/latency */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter mb-8">
         <MetricCard label="Nodes Online" value={`${healthyCount}/${total}`} icon="router" color="text-primary" />
-        <MetricCard label="Active Sessions" value={reservedComponents.length} icon="lock" color="text-secondary" />
-        <MetricCard label="Total Bandwidth" value={`${domainsWithIssues}/3`} icon="warning" color="text-tertiary" />
-        <MetricCard label="Latency (Avg)" value="3s" icon="bolt" color="text-on-surface" />
+        <MetricCard label="Active Reservations" value={reservedComponents.length} icon="lock" color="text-secondary" />
+        <MetricCard label="System Health" value={healthLabel} icon="monitor_heart" color={healthText} />
       </div>
 
       {/* Grid utama */}
