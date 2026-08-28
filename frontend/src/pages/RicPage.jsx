@@ -89,6 +89,7 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
   const heroView = {
     cpuPct: hero?.cpu_pct ?? 0,
     memGb: hero?.mem_gb ?? 0,
+    memPct: hero?.mem_pct ?? 0,
     latencyMs: hero?.latency_ms ?? 0,
   };
 
@@ -199,7 +200,7 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
             <MetricTile
               label="Memory Usage"
               value={`${heroView.memGb} GB`}
-              pct={Math.min(100, heroView.memGb * 10)}
+              pct={heroView.memPct}
             />
             <MetricTile
               label="Latency (E2)"

@@ -48,6 +48,18 @@ backend:
     sudoPassword: ""
     namespace: "open5gs-chart"
     kubeconfig: "/etc/kubernetes/admin.conf"
+  ric:
+    sshHost: "10.91.2.153"
+    sshPort: "22"
+    sshUser: "telmat"
+    sshPassword: "telmat123"
+    k8sSshHost: ""
+    k8sSshPort: "22"
+    k8sSshUser: "telmat"
+    k8sSshPassword: "123"
+    k8sSudoPassword: "123"
+    k8sNamespace: "ric"
+    k8sKubeconfig: "/etc/kubernetes/admin.conf"
 
 auth:
   oranUsers: "admin:admin"

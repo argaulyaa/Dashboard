@@ -1684,11 +1684,11 @@ class SrsRanSshAdapter(SshRanAdapter):
 
 
 # ---------------------------------------------------------------------------
-# RIC adapters
+# RIC adapters — real FlexRIC via SSH to 10.91.2.153 / K8s ns ric
 # ---------------------------------------------------------------------------
 
 class RicAdapter(BaseAdapter):
-    """Mock RIC adapter — FlexRIC near-RT xApps + non-RT RIC."""
+    """Mock RIC adapter — FlexRIC near-RT xApps + non-RT RIC (fallback)."""
 
     def __init__(self):
         super().__init__([
@@ -1698,6 +1698,539 @@ class RicAdapter(BaseAdapter):
             Component("nonrt-ric", "non-RT RIC", "A1 policy controller", "healthy", "2 policies active",
                        host="172.20.0.123", cpu_pct=14.2, mem_gb=2.4, mem_pct=38, latency_ms=1.2),
         ])
+
+
+class SshRicAdapter:
+    """Adapter RIC real — FlexRIC nearRT-RIC bare-metal via SSH ke 10.91.2.153.
+
+    Menggantikan RicAdapter(mock) ketika env RIC_SSH_HOST diisi (env: RIC_SSH_HOST,
+    RIC_SSH_USER/PASSWORD/PORT). Data diambil live lewat 1 round-trip SSH:
+
+      - ps -C nearRT-RIC -> PID/etime/pcpu/rss/args (cpu/mem/uptime)
+      - ss --sctp -tln / ss --sctp -tan -> LISTEN + ESTAB (E2 connections)
+      - systemctl show flexric (optional) -> uptime systemd fallback
+      - ping ke RAN (10.91.2.152) -> latency_ms
+      - free -m / mem total untuk mem_pct
+
+    Kontrak sama dengan BaseAdapter: list/get/restart/jitter_health/get_logs.
+    Status:
+      healthy  = proses ada + SCTP 36421 LISTEN
+      degraded = proses ada tapi tidak LISTEN (baru restart / bind gagal)
+      down     = proses tidak ditemukan / SSH gagal
+    Detail selalu jujur: "E2: N node(s) connected", PID, uptime, CPU.
+    host = IP node RIC (10.91.2.153) agar Console SSH bisa dipakai.
+    """
+
+    CACHE_TTL = 2.5
+
+    def __init__(self, ssh_host: str, ssh_user: str, ssh_password: str, ssh_port: int = 22):
+        self._ssh = {"host": ssh_host, "port": int(ssh_port), "user": ssh_user, "password": ssh_password}
+        self._conn = None
+        self._cache: dict = {}
+        self._last_fetch = 0.0
+
+    # kontrak adapter -------------------------------------------------------
+    def list(self) -> List[dict]:
+        self._maybe_refresh()
+        # jaga urutan: hero di frontend = cari nonrt-ric else first. Kita expose
+        # 1 komponen real dengan id "ric" + alias "nonrt-ric" agar kedua key jalan.
+        # list() hanya kembalikan primary "ric"; alias di-handle get() fallback.
+        # Frontend memakai displayedComponents[0] sehingga hero tetap dapat nilai real.
+        # Sertakan juga nonrt-ric duplicate agar hero find(\"nonrt-ric\") langsung match.
+        # Untuk menghindari double-count di table, we return single primary and let
+        # _with_alias handle get(). But list() with one entry is cleaner: hero
+        # fallback to first entry works (verified RicPage.jsx). Keep one entry.
+        return list(self._cache.values()) if self._cache else []
+
+    def get(self, comp_id: str) -> Optional[dict]:
+        self._maybe_refresh()
+        if comp_id in self._cache:
+            return self._cache[comp_id]
+        # alias: frontend hero cari \"nonrt-ric\", dashboard restart may use \"ric\"
+        # legacy ids xapp-* return down placeholder biar tidak 404 saat UI masih cache lama
+        if comp_id in ("nonrt-ric", "flexric", "nearrt-ric", "ric"):
+            vals = list(self._cache.values())
+            return vals[0] if vals else None
+        if comp_id.startswith("xapp-"):
+            # xApp belum di-deploy bare-metal; tampilkan down jujur
+            return {
+                "id": comp_id, "name": comp_id, "kind": "near-RT RIC xApp",
+                "status": "down", "detail": "xApp not deployed on bare-metal testbed (only nearRT-RIC running)",
+                "host": self._ssh["host"], "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
+                "throughput_mbps": 0.0, "port": 36422, "latency_ms": 0.0, "active_ues": 0,
+                "last_updated": time.time(), "uptime_seconds": 0, "started_at": time.time(),
+            }
+        return None
+
+    async def restart(self, comp_id: str) -> Optional[dict]:
+        if comp_id not in ("ric", "nonrt-ric", "flexric", "nearrt-ric"):
+            # izinkan restart xapp mock tetap fake success supaya UI tidak error
+            if comp_id.startswith("xapp-"):
+                await asyncio.sleep(1)
+                return self.get(comp_id)
+            return None
+        try:
+            # coba systemd dulu (jika service enabled), fallback kill+start manual
+            out, err = self._exec("systemctl is-active flexric 2>&1; echo __S1__; sudo systemctl restart flexric 2>&1 || systemctl restart flexric 2>&1; echo __RC__$?; sleep 2; ps -C nearRT-RIC --no-headers -o pid= 2>/dev/null | head -1")
+        except Exception as e:
+            err = str(e)
+        self._last_fetch = 0
+        await asyncio.sleep(1.5)
+        result = self.get(comp_id if comp_id in self._cache else "ric")
+        if result:
+            result = dict(result)
+            # kalau restart gagal total, tandai di detail
+            if result.get("status") == "down":
+                result["detail"] = "Restart attempted but RIC still down — check SSH/systemctl"
+            else:
+                result["status"] = "restarting"
+                result["detail"] = "Restart requested via SSH (systemctl restart flexric)"
+            result["last_updated"] = time.time()
+        return result
+
+    def jitter_health(self):
+        pass
+
+    def get_logs(self, comp_id: str, tail: int = 100) -> str:
+        if comp_id not in ("ric", "nonrt-ric", "flexric", "nearrt-ric") and not comp_id.startswith("xapp-"):
+            return f"Component '{comp_id}' not found."
+        # xApp down placeholder
+        if comp_id.startswith("xapp-"):
+            return f"[RIC] xApp '{comp_id}' not deployed — no logs (only nearRT-RIC running on {self._ssh['host']})"
+        try:
+            # cek beberapa lokasi log umum
+            out, _ = self._exec(
+                "tail -n {t} ~/ric-script.log 2>/dev/null || tail -n {t} /var/log/flexric.log 2>/dev/null || journalctl -u flexric --no-pager -n {t} 2>/dev/null || echo '(tidak ada log)'".format(t=int(tail))
+            )
+            return (out or "").strip() or "(tidak ada log)"
+        except Exception as e:
+            return f"[SSH Error] Gagal ambil log RIC: {e}"
+
+    # helpers ---------------------------------------------------------------
+    def _maybe_refresh(self):
+        now = time.time()
+        if now - self._last_fetch < self.CACHE_TTL:
+            return
+        self._last_fetch = now
+        try:
+            out, _ = self._exec(
+                "m=$(ps -C nearRT-RIC --no-headers -o pid=,etime=,pcpu=,rss=,args= 2>/dev/null | head -1); "
+                "[ -n \"$m\" ] && echo \"PROC|ric|$m\"; "
+                "echo \"MEMTOT|$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')\"; "
+                "echo \"SCTP_LISTEN|$(ss -an 2>/dev/null | grep ':36421' | grep -c LISTEN)\"; "
+                "echo \"SCTP_ESTAB|$(ss -an 2>/dev/null | grep ':36421' | grep -c ESTAB)\"; "
+                "echo \"SCTP_PEERS|$(ss -an 2>/dev/null | grep ':36421' | grep ESTAB | head -5 | tr '\\n' ';')\"; "
+                "echo \"UPTIME_SYS|$(systemctl show flexric --property=ActiveEnterTimestamp 2>/dev/null | head -1)\"; "
+                "echo \"PING|$(ping -c 1 -W 1 10.91.2.152 2>/dev/null | grep -oE 'time=[0-9.]+' | head -1)\""
+            )
+        except Exception as e:
+            print(f"[SshRicAdapter] SSH ke {self._ssh['host']} gagal: {e}", flush=True)
+            self._cache = {"ric": self._down(f"SSH ke node RIC gagal: {e}")}
+            return
+
+        proc = None
+        mem_total_m = 0
+        sctp_listen = 0
+        sctp_estab = 0
+        sctp_peers = ""
+        uptime_sys = ""
+        ping_raw = ""
+        for ln in out.splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            if ln.startswith("PROC|"):
+                parts = ln.split("|", 2)
+                if len(parts) >= 3:
+                    rest = parts[2].split(None, 4)
+                    if len(rest) >= 4:
+                        proc = {"pid": rest[0], "etime": rest[1], "pcpu": self._to_float(rest[2]), "rss_kb": self._to_float(rest[3]), "args": rest[4] if len(rest) > 4 else ""}
+            elif ln.startswith("MEMTOT|"):
+                try:
+                    mem_total_m = int(ln.split("|", 1)[1] or 0)
+                except Exception:
+                    mem_total_m = 0
+            elif ln.startswith("SCTP_LISTEN|"):
+                try:
+                    sctp_listen = int(ln.split("|", 1)[1] or 0)
+                except Exception:
+                    sctp_listen = 0
+            elif ln.startswith("SCTP_ESTAB|"):
+                try:
+                    sctp_estab = int(ln.split("|", 1)[1] or 0)
+                except Exception:
+                    sctp_estab = 0
+            elif ln.startswith("SCTP_PEERS|"):
+                sctp_peers = ln.split("|", 1)[1] if "|" in ln else ""
+            elif ln.startswith("UPTIME_SYS|"):
+                uptime_sys = ln.split("|", 1)[1] if "|" in ln else ""
+            elif ln.startswith("PING|"):
+                ping_raw = ln.split("|", 1)[1] if "|" in ln else ""
+
+        if not proc:
+            self._cache = {"ric": self._down("FlexRIC nearRT-RIC tidak jalan (proses 'nearRT-RIC' tidak ditemukan) — coba systemctl start flexric")}
+            return
+
+        # uptime: prefer systemd ActiveEnterTimestamp else ps etime
+        uptime = self._parse_systemd_uptime(uptime_sys) or self._parse_etime(proc["etime"])
+        mem_gb = proc["rss_kb"] / (1024 * 1024)
+        mem_total_gb = (mem_total_m / 1024) if mem_total_m else 29.8
+        mem_pct = round(min(100.0, mem_gb / mem_total_gb * 100), 2) if mem_total_gb else 0.0
+        # latency from ping time=XX
+        latency_ms = 0.0
+        if ping_raw and "time=" in ping_raw:
+            try:
+                import re as _re
+                _m = _re.search(r"time=([0-9.]+)", ping_raw)
+                if _m:
+                    latency_ms = round(float(_m.group(1)), 2)
+            except Exception:
+                pass
+
+        # status logic
+        if proc and sctp_listen > 0:
+            # jika ada ESTAB, healthy; tanpa ESTAB tapi LISTEN tetap healthy (RIC standby)
+            status = "healthy" if sctp_estab > 0 else "healthy"
+            # jika ESTAB 0 tapi LISTEN ada, tetap healthy tapi detail sebut waiting
+        elif proc and sctp_listen == 0:
+            status = "degraded"
+        else:
+            status = "down"
+
+        # detail: host/cpu/mem/latency/status/E2 count/uptime
+        peers_short = sctp_peers.strip().strip(";")
+        if peers_short:
+            import re as _re2
+            ips = _re2.findall(r"\d+\.\d+\.\d+\.\d+:\d+", peers_short)
+            peers_short = ", ".join(ips[:3]) if ips else peers_short.replace(";", ", ")[:120]
+            if not peers_short:
+                peers_short = "-"
+        else:
+            peers_short = "-"
+        detail = (
+            f"FlexRIC nearRT-RIC | PID {proc['pid']} | E2: {sctp_estab} node(s) connected"
+            + (f" ({peers_short})" if sctp_estab and peers_short != "-" else "")
+            + f" | SCTP :36421 {'LISTEN' if sctp_listen else 'not listening'}"
+            + f" | uptime {self._fmt_uptime(uptime)} | CPU {proc['pcpu']}% MEM {round(mem_gb,2)}GB"
+        )
+
+        comp = {
+            "id": "ric",
+            "name": "FlexRIC RIC",
+            "kind": "near-RT RIC",
+            "status": status,
+            "detail": detail,
+            "host": self._ssh["host"],
+            "cpu_pct": round(proc["pcpu"], 2),
+            "mem_gb": round(mem_gb, 2),
+            "mem_pct": mem_pct,
+            "throughput_mbps": 0.0,
+            "port": 36421,
+            "latency_ms": latency_ms,
+            "active_ues": sctp_estab,  # reuse field to surface E2 count di UI kalau mau
+            "last_updated": time.time(),
+            "uptime_seconds": uptime,
+            "started_at": time.time() - uptime,
+        }
+        # keep both keys for frontend hero compatibility: primary \"ric\" and alias \"nonrt-ric\"
+        self._cache = {"ric": comp, "nonrt-ric": dict(comp, id="nonrt-ric", name="FlexRIC RIC")}
+        # also keep single canonical in list via _cache filtered in list() — but now cache has 2
+        # list() will return both; frontend table akan show 2 rows identical — lebih jelas
+        # hide duplicate: list() should return 1. So keep internal 2 untuk get alias, tapi
+        # list() override di atas untuk filter. Simpler: simpan 1 saja dan alias di get().
+        # Reset ke single entry internal, alias handled in get() fallback:
+        self._cache = {"ric": comp}
+
+    def _down(self, reason) -> dict:
+        return {
+            "id": "ric", "name": "FlexRIC RIC", "kind": "near-RT RIC", "status": "down",
+            "detail": reason, "host": self._ssh["host"],
+            "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
+            "throughput_mbps": 0.0, "port": 36421, "latency_ms": 0.0, "active_ues": 0,
+            "last_updated": time.time(), "uptime_seconds": 0, "started_at": time.time(),
+        }
+
+    def _exec(self, cmd):
+        import paramiko
+        conn = self._conn
+        if conn is None or not conn.get_transport() or not conn.get_transport().is_active():
+            conn = paramiko.SSHClient()
+            conn.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            conn.connect(hostname=self._ssh["host"], port=self._ssh["port"],
+                         username=self._ssh["user"], password=self._ssh["password"],
+                         timeout=8, banner_timeout=10)
+            self._conn = conn
+        _, stdout, stderr = conn.exec_command(cmd, timeout=20)
+        out = stdout.read().decode("utf-8", errors="replace")
+        err = stderr.read().decode("utf-8", errors="replace")
+        return out, err
+
+    @staticmethod
+    def _to_float(s) -> float:
+        try:
+            return float(str(s).replace("%", "").strip())
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _parse_etime(etime) -> int:
+        try:
+            d = 0
+            hms = etime
+            if "-" in etime:
+                d, hms = etime.split("-", 1)
+                d = int(d)
+            parts = [int(x) for x in hms.split(":")]
+            if len(parts) == 3:
+                h, m, s = parts
+            elif len(parts) == 2:
+                h, m, s = 0, parts[0], parts[1]
+            else:
+                h, m, s = 0, 0, parts[0]
+            return d * 86400 + h * 3600 + m * 60 + s
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _parse_systemd_uptime(line: str) -> int:
+        if not line or "ActiveEnterTimestamp=" not in line or "n/a" in line.lower():
+            return 0
+        try:
+            import re as _re
+            from datetime import datetime, timezone
+            ts_str = line.split("=", 1)[1].strip()
+            # e.g. "Thu 2026-08-28 13:20:00 WIB" -> try parse
+            for fmt in ("%a %Y-%m-%d %H:%M:%S %Z", "%a %Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S %Z"):
+                try:
+                    dt = datetime.strptime(ts_str, fmt)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    import time as _time
+                    return int(_time.time() - dt.timestamp())
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return 0
+
+    @staticmethod
+    def _fmt_uptime(secs: int) -> str:
+        try:
+            d, r = divmod(int(secs), 86400)
+            h, r = divmod(r, 3600)
+            m, s = divmod(r, 60)
+            if d:
+                return f"{d}d{h}h{m}m"
+            if h:
+                return f"{h}h{m}m{s}s"
+            if m:
+                return f"{m}m{s}s"
+            return f"{s}s"
+        except Exception:
+            return f"{secs}s"
+
+
+class KubectlRicAdapter:
+    """Adapter RIC via Kubernetes ns ric (Fase hostNetwork).
+
+    Membaca state FlexRIC K8s pod di namespace ric via kubectl over SSH ke master
+    10.91.2.156 (/etc/kubernetes/admin.conf, sudo -S). Live metrics via
+    kubectl get pods -o wide + top pods + get svc. Fallback ke down jujur jika
+    tidak ada pod / SSH gagal. Port 36421 SCTP, E2 count dari ss di dalam pod
+    (kubectl exec) kalau memungkinkan, fallback ke pod readiness.
+
+    READ-ONLY Fase 1 — restart() hanya simulasi UI.
+    """
+
+    CACHE_TTL = 2.5
+
+    def __init__(self, ssh_host: str, ssh_user: str, ssh_password: str = "", sudo_password: str = "",
+                 ssh_port: int = 22, namespace: str = "ric",
+                 kubeconfig: str = "/etc/kubernetes/admin.conf", kubectl_bin: str = "kubectl"):
+        self._map = {"ric": "flexric-nearrt-ric"}
+        self._ssh = {"host": ssh_host, "port": int(ssh_port), "user": ssh_user, "password": ssh_password, "sudo": sudo_password or ssh_password}
+        self._ns = namespace
+        self._kubeconfig = kubeconfig
+        self._kubectl = kubectl_bin
+        self._conn = None
+        self._cache: dict = {}
+        self._last_fetch = 0.0
+
+    def list(self) -> List[dict]:
+        self._maybe_refresh()
+        return [self._cache[c] for c in self._map if c in self._cache]
+
+    def get(self, comp_id: str) -> Optional[dict]:
+        if comp_id not in self._map and comp_id not in ("nonrt-ric", "flexric", "nearrt-ric"):
+            if comp_id.startswith("xapp-"):
+                return {"id": comp_id, "name": comp_id, "kind": "near-RT RIC xApp", "status": "down", "detail": "xApp not in K8s ns ric (only nearRT-RIC deployed)", "host": self._ssh["host"], "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0, "throughput_mbps": 0.0, "port": 36422, "latency_ms": 0.0, "active_ues": 0, "last_updated": time.time(), "uptime_seconds": 0, "started_at": time.time()}
+            return None
+        self._maybe_refresh()
+        key = comp_id if comp_id in self._cache else "ric"
+        return self._cache.get(key)
+
+    async def restart(self, comp_id: str) -> Optional[dict]:
+        await asyncio.sleep(1.5)
+        self._maybe_refresh()
+        result = dict(self._cache.get("ric") or {})
+        if result and result.get("status") == "healthy":
+            result["status"] = "restarting"
+            result["detail"] = "Restart request noted (read-only K8s mode; no rollout executed)"
+            result["last_updated"] = time.time()
+        return result
+
+    def jitter_health(self):
+        pass
+
+    def get_logs(self, comp_id: str, tail: int = 100) -> str:
+        if comp_id not in self._map and comp_id not in ("nonrt-ric", "flexric", "nearrt-ric"):
+            return f"Component '{comp_id}' not mapped."
+        try:
+            out, err = self._exec(f"{self._kctl()} -n {self._ns} logs --tail={int(tail)} --timestamps -l app=flexric-nearrt-ric")
+            return (out or "").strip() or (err.strip() or "(tidak ada log)")
+        except Exception as e:
+            return f"[SSH Error] Gagal ambil log RIC via kubectl: {e}"
+
+    def _kctl(self) -> str:
+        return f"sudo -S -p '' {self._kubectl} --kubeconfig={self._kubeconfig}"
+
+    def _exec(self, cmd: str):
+        import paramiko
+        conn = self._conn
+        if conn is None or not conn.get_transport() or not conn.get_transport().is_active():
+            conn = paramiko.SSHClient()
+            conn.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            conn.connect(hostname=self._ssh["host"], port=self._ssh["port"], username=self._ssh["user"], password=self._ssh["password"], timeout=8, banner_timeout=10)
+            self._conn = conn
+        full = f"echo {_sh_quote(self._ssh['sudo'])} | {cmd}"
+        _, stdout, stderr = conn.exec_command(full, timeout=25)
+        return stdout.read().decode("utf-8", errors="replace"), stderr.read().decode("utf-8", errors="replace")
+
+    def _maybe_refresh(self):
+        now = time.time()
+        if now - self._last_fetch < self.CACHE_TTL:
+            return
+        self._last_fetch = now
+        kc = self._kctl()
+        try:
+            out, err = self._exec(
+                f"{kc} -n {self._ns} get pods -o wide --no-headers; echo '===STARTED==='; "
+                f"{kc} -n {self._ns} get pods -o custom-columns=':metadata.name,:status.startTime' --no-headers; echo '===METRICS==='; "
+                f"{kc} -n {self._ns} top pods --no-headers 2>/dev/null; echo '===SVC==='; "
+                f"{kc} -n {self._ns} get svc -o wide --no-headers 2>/dev/null"
+            )
+        except Exception as e:
+            print(f"[KubectlRicAdapter] SSH ke {self._ssh['host']} gagal: {e}", flush=True)
+            for k in self._map:
+                self._cache[k] = self._down_component(k, f"SSH ke node K8s gagal: {e}")
+            return
+        if "===STARTED===" not in out:
+            reason = (err or out or "kubectl tidak mengembalikan data").strip()
+            for k in self._map:
+                self._cache[k] = self._down_component(k, f"kubectl gagal: {reason[:160]}")
+            return
+        pods, started, metrics = {}, {}, {}
+        section = "pods"
+        for raw in out.splitlines():
+            line = raw.strip()
+            if line == "===STARTED===": section = "started"; continue
+            if line == "===METRICS===": section = "metrics"; continue
+            if line == "===SVC===": section = "svc"; continue
+            if not line: continue
+            if section == "pods":
+                import re
+                toks = line.split()
+                if len(toks) >= 6:
+                    name = toks[0]
+                    ready = toks[1] if len(toks) > 1 else ""
+                    phase = toks[2] if len(toks) > 2 else ""
+                    restarts = toks[3] if len(toks) > 3 else "0"
+                    pod_ip = ""
+                    node = ""
+                    for idx, tok in enumerate(toks):
+                        if re.match(r'^\d+\.\d+\.\d+\.\d+$', tok) and tok != "<none>":
+                            pod_ip = tok
+                            if idx + 1 < len(toks): node = toks[idx+1]
+                            break
+                    pods[name] = {"ready": ready, "phase": phase, "restarts": restarts, "pod_ip": pod_ip, "node": node}
+            elif section == "started":
+                p = line.split()
+                if len(p) >= 2: started[p[0]] = "" if p[1] == "<none>" else p[1]
+            elif section == "metrics":
+                p = line.split()
+                if len(p) >= 3:
+                    metrics[p[0]] = {"cpu_pct": self._cpu_to_pct(p[1]), "mem_mi": self._to_float_mi(p[2] if len(p) == 3 else p[3])}
+        for comp_id, prefix in self._map.items():
+            entry = None
+            for pod_name, info in pods.items():
+                if pod_name == prefix or pod_name.startswith(prefix + "-"):
+                    entry = (pod_name, info); break
+            if entry is None:
+                self._cache[comp_id] = self._down_component(comp_id, f"Pod tidak ditemukan di ns {self._ns}: {prefix}*")
+                continue
+            pod_name, info = entry
+            phase = info["phase"]
+            status = self._map_k8s_status(phase, info["restarts"])
+            start_iso = started.get(pod_name, "")
+            started_at = self._parse_start_time(start_iso)
+            met = metrics.get(pod_name, {})
+            detail_bits = [f"Pod {pod_name} ({phase}, {info['ready']})"]
+            if info["node"]: detail_bits.append(f"node {info['node']}")
+            if info["pod_ip"]: detail_bits.append(f"podIP {info['pod_ip']}")
+            detail_bits.append(f"port 36421/SCTP hostNetwork")
+            self._cache[comp_id] = {
+                "id": comp_id, "name": "FlexRIC RIC", "kind": "near-RT RIC", "status": status,
+                "detail": " • ".join(detail_bits), "host": info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else self._ssh["host"],
+                "cpu_pct": met.get("cpu_pct", 0.0), "mem_gb": round(met.get("mem_mi", 0.0) / 1024.0, 2), "mem_pct": 0.0,
+                "throughput_mbps": 0.0, "port": 36421, "latency_ms": 0.0, "active_ues": 0,
+                "last_updated": time.time(), "uptime_seconds": (time.time() - started_at) if started_at else 0, "started_at": started_at or time.time(),
+            }
+
+    @staticmethod
+    def _map_k8s_status(phase: str, restarts: str = "0") -> Status:
+        s = (phase or "").lower()
+        if "running" in s:
+            try:
+                if int(str(restarts).split("(")[0]) >= 10: return "degraded"
+            except Exception: pass
+            return "healthy"
+        if "pending" in s or "containercreating" in s or "init:" in s: return "degraded"
+        if "crashloopbackoff" in s or "error" in s or "evicted" in s: return "down"
+        if "terminated" in s or "completed" in s: return "degraded"
+        return "degraded"
+
+    @staticmethod
+    def _parse_start_time(iso_str: str) -> Optional[float]:
+        if not iso_str: return None
+        try:
+            from datetime import datetime, timezone
+            s = iso_str.strip().rstrip("Z")
+            if "." in s: s = s.split(".")[0]
+            dt = datetime.strptime(s, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except Exception: return None
+
+    @staticmethod
+    def _cpu_to_pct(cpu_cores: str) -> float:
+        try:
+            c = cpu_cores.strip().lower()
+            if c.endswith("n"): return round(float(c[:-1]) / 1e7, 1)
+            if c.endswith("m"): return round(float(c[:-1]) / 10.0, 1)
+            return round(float(c), 1)
+        except Exception: return 0.0
+
+    @staticmethod
+    def _to_float_mi(mem_val: str) -> float:
+        try:
+            v = mem_val.strip().lower()
+            if v.endswith("mi"): return float(v[:-2])
+            if v.endswith("gi"): return float(v[:-2]) * 1024
+            if v.endswith("ki"): return float(v[:-2]) / 1024
+            return float(v)
+        except Exception: return 0.0
+
+    def _down_component(self, comp_id: str, reason: str) -> dict:
+        return {"id": comp_id, "name": "FlexRIC RIC", "kind": "near-RT RIC", "status": "down", "detail": reason, "host": self._ssh["host"], "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0, "throughput_mbps": 0.0, "port": 36421, "latency_ms": 0.0, "active_ues": 0, "last_updated": time.time(), "uptime_seconds": 0, "started_at": time.time()}
 
 
 # ---------------------------------------------------------------------------
@@ -2000,15 +2533,57 @@ def _build_ran_providers() -> dict:
     return providers
 
 
+def _build_ric_providers() -> dict:
+    """RIC providers — real via SSH bare-metal atau K8s ns ric, fallback mock.
+
+    Prioritas:
+      1) Jika RIC_K8S_SSH_HOST terisi -> KubectlRicAdapter (ns ric via 10.91.2.156)
+      2) Elif RIC_SSH_HOST terisi -> SshRicAdapter bare-metal (10.91.2.153)
+      3) fallback -> RicAdapter mock
+    Env tambahan: RIC_K8S_NAMESPACE (default ric), RIC_K8S_SUDO_PASSWORD, dsb.
+    """
+    providers = {}
+    # K8s ns ric via kubectl over SSH (hostNetwork deployment flexric-nearrt-ric)
+    ric_k8s_host = os.environ.get("RIC_K8S_SSH_HOST", "") or None
+    if ric_k8s_host:
+        try:
+            ric_ns = os.environ.get("RIC_K8S_NAMESPACE", "ric") or "ric"
+            ric_kubeconf = os.environ.get("RIC_K8S_ADMIN_CONF", "/etc/kubernetes/admin.conf") or "/etc/kubernetes/admin.conf"
+            adapter = KubectlRicAdapter(
+                ssh_host=ric_k8s_host,
+                ssh_user=os.environ.get("RIC_K8S_SSH_USER", "telmat"),
+                ssh_password=os.environ.get("RIC_K8S_SSH_PASSWORD", ""),
+                sudo_password=os.environ.get("RIC_K8S_SUDO_PASSWORD", "") or os.environ.get("K8S_SUDO_PASSWORD", ""),
+                ssh_port=int(os.environ.get("RIC_K8S_SSH_PORT", "22")),
+                namespace=ric_ns,
+                kubeconfig=ric_kubeconf,
+            )
+            desc = f"FlexRIC nearRT-RIC — live dari Kubernetes (ns {ric_ns} via kubectl@{ric_k8s_host})"
+        except Exception as e:
+            print(f"[RIC K8s] fallback mock due to {e}", flush=True)
+            adapter = RicAdapter()
+            desc = "FlexRIC near-RT RIC (fallback mock — env K8s invalid)"
+        providers["oai"] = {"label": "FlexRIC", "icon": "memory", "desc": desc, "adapter": adapter}
+        return providers
+
+    ssh_host = os.environ.get("RIC_SSH_HOST", "") or None
+    if ssh_host:
+        adapter = SshRicAdapter(
+            ssh_host=ssh_host,
+            ssh_user=os.environ.get("RIC_SSH_USER", "telmat"),
+            ssh_password=os.environ.get("RIC_SSH_PASSWORD", ""),
+            ssh_port=int(os.environ.get("RIC_SSH_PORT", "22")),
+        )
+        desc = f"FlexRIC nearRT-RIC — live bare-metal via SSH@{ssh_host} (SCTP :36421)"
+    else:
+        adapter = RicAdapter()
+        desc = "FlexRIC near-RT RIC & xApps (mock)"
+    providers["oai"] = {"label": "FlexRIC", "icon": "memory", "desc": desc, "adapter": adapter}
+    return providers
+
+
 DOMAIN_PROVIDERS = {
     "core": _build_core_providers(),
     "ran": _build_ran_providers(),
-    "ric": {
-        "oai": {
-            "label": "FlexRIC",
-            "icon": "memory",
-            "desc": "FlexRIC near-RT RIC & xApps (mock)",
-            "adapter": RicAdapter(),
-        },
-    },
+    "ric": _build_ric_providers(),
 }
