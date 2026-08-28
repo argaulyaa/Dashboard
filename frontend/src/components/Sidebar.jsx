@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { setUser, getRole } from "../user.js";
+import { getRole } from "../user.js";
+import { fetchMe } from "../auth.js";
 
 const NAV_ITEMS = [
   { to: "/", label: "Overview", icon: "dashboard", end: true },
@@ -12,13 +13,41 @@ const NAV_ITEMS = [
   { to: "/profile", label: "Profile", icon: "account_circle" },
 ];
 
-export default function Sidebar({ currentUser, onUserChange, onLogout }) {
-  const [editing, setEditing] = useState(!currentUser);
-  const [value, setValue] = useState(currentUser || "");
-
+export default function Sidebar({ currentUser, fullName: fullNameProp, onUserChange, onLogout }) {
   const role = getRole();
   const isAdmin = currentUser === "admin" || role === "admin";
-  const initials = (currentUser || "?").trim().slice(0, 2).toUpperCase();
+
+  // displayName = full_name from /api/auth/me, fallback to username if empty, never email
+  const [displayName, setDisplayName] = useState(() => {
+    const f = (fullNameProp || "").trim();
+    if (f) return f;
+    return currentUser || "";
+  });
+
+  useEffect(() => {
+    const propFn = (fullNameProp || "").trim();
+    if (propFn) {
+      setDisplayName(propFn);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await fetchMe();
+        if (cancelled) return;
+        const fn = (me?.full_name || "").trim();
+        if (fn) setDisplayName(fn);
+        else setDisplayName(currentUser || "");
+      } catch {
+        if (!cancelled) setDisplayName(currentUser || "");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, fullNameProp]);
+
+  const initials = (displayName || currentUser || "?").trim().slice(0, 2).toUpperCase();
 
   const visibleNavItems = NAV_ITEMS.filter((item) => {
     if (item.to === "/reservations" && !(role === "user" || role === "admin")) return false;
@@ -59,54 +88,28 @@ export default function Sidebar({ currentUser, onUserChange, onLogout }) {
       </nav>
 
       <div className="p-gutter border-t border-outline-variant">
-        {editing ? (
-          <div className="flex items-center gap-2">
-            <input
-              className="w-full bg-surface-container-low border-none rounded-lg text-on-surface px-3 py-2 text-body-md focus:outline-none focus:ring-2 focus:ring-primary-container"
-              placeholder="Your name..."
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && save()}
-              autoFocus
-            />
-            <button
-              className="shrink-0 px-3 py-2 rounded-lg bg-primary-container text-white text-label-sm font-semibold"
-              onClick={save}
-            >
-              OK
-            </button>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0" title={displayName}>
+            <div className="w-10 h-10 rounded-full bg-surface-container-highest text-primary flex items-center justify-center font-title-md shrink-0">
+              {initials}
+            </div>
+            <div className="text-left min-w-0">
+              <p className="font-title-md text-title-md text-on-surface truncate">{displayName || currentUser}</p>
+              <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                role === "admin" ? "bg-primary/10 text-primary" : "bg-primary/10 text-primary"
+              }`}>
+                {role === "user" || role === "admin" ? role : "user"}
+              </span>
+            </div>
           </div>
-        ) : (
-          <div className="flex items-center justify-between gap-3">
-            <button
-              className="flex items-center gap-3 min-w-0 bg-transparent"
-              onClick={() => {
-                setValue(currentUser || "");
-                setEditing(true);
-              }}
-              title="Change username"
-            >
-              <div className="w-10 h-10 rounded-full bg-surface-container-highest text-primary flex items-center justify-center font-title-md shrink-0">
-                {initials}
-              </div>
-              <div className="text-left min-w-0">
-                <p className="font-title-md text-title-md text-on-surface truncate">{currentUser}</p>
-                <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                  role === "admin" ? "bg-primary/10 text-primary" : "bg-primary/10 text-primary"
-                }`}>
-                  {role === "user" || role === "admin" ? role : "user"}
-                </span>
-              </div>
-            </button>
-            <button
-              className="p-2 text-primary hover:bg-primary-fixed rounded-lg transition-colors flex items-center justify-center shrink-0"
-              title="Logout"
-              onClick={onLogout}
-            >
-              <span className="material-symbols-outlined">logout</span>
-            </button>
-          </div>
-        )}
+          <button
+            className="p-2 text-primary hover:bg-primary-fixed rounded-lg transition-colors flex items-center justify-center shrink-0"
+            title="Logout"
+            onClick={onLogout}
+          >
+            <span className="material-symbols-outlined">logout</span>
+          </button>
+        </div>
       </div>
     </aside>
   );

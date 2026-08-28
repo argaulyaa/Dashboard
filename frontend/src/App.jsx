@@ -19,7 +19,7 @@ import Profile from "./pages/Profile.jsx";
 import Register from "./pages/Register.jsx";
 import VerifyEmail from "./pages/VerifyEmail.jsx";
 import AuditLogs from "./pages/AuditLogs.jsx";
-import { isAuthenticated, logout } from "./auth.js";
+import { isAuthenticated, logout, fetchMe } from "./auth.js";
 
 // const DOMAIN_META = {
 //   core: { title: "Core", subtitle: "5G Core network functions" },
@@ -62,6 +62,7 @@ export default function App() {
   const [wsStatus, setWsStatus] = useState("connecting");
   const [error, setError] = useState(null);
   const [currentUser, setCurrentUser] = useState(getUser());
+  const [fullName, setFullName] = useState("");
   const [opsCount, setOpsCount] = useState(0);
   const [lastTelemetryAt, setLastTelemetryAt] = useState(null);
   // Meta WS v2 (meta.active per domain + bindings) — dipakai Core/RanPage
@@ -132,6 +133,25 @@ const handleLogout = useCallback(() => {
     );
   }, []);
 
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      setFullName("");
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await fetchMe();
+        if (cancelled) return;
+        const fn = (me?.full_name || "").trim();
+        setFullName(fn || "");
+      } catch {
+        if (!cancelled) setFullName("");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentUser]);
+
   if (!isAuthenticated()) {
     return (
       <HashRouter>
@@ -151,6 +171,7 @@ const handleLogout = useCallback(() => {
       <div className="min-h-screen bg-surface">
         <Sidebar
           currentUser={currentUser}
+          fullName={fullName}
           onUserChange={setCurrentUser}
           onLogout={handleLogout}
         />
