@@ -746,14 +746,31 @@ class KubectlOaiCoreAdapter:
             if not line:
                 continue
             if section == "pods":
-                p = line.split(None, 8)
-                # NAME READY STATUS RESTARTS AGE IP NODE ...
-                if len(p) >= 6:
-                    pods[p[0]] = {
-                        "ready": p[1], "phase": p[2],
-                        "restarts": p[3],
-                        "pod_ip": p[5] if len(p) > 5 else "",
-                        "node": p[6] if len(p) > 6 else "",
+                # Robust parse: NAME READY STATUS RESTARTS AGE IP NODE ...
+                # but RESTARTS field may be "100 (79s ago)" -> extra tokens, so IP not fixed index
+                # Detect IP by regex and node is token after IP
+                import re
+                tokens = line.split()
+                if len(tokens) >= 6:
+                    name = tokens[0]
+                    ready = tokens[1] if len(tokens) > 1 else ""
+                    phase = tokens[2] if len(tokens) > 2 else ""
+                    restarts = tokens[3] if len(tokens) > 3 else "0"
+                    pod_ip = ""
+                    node = ""
+                    for idx, tok in enumerate(tokens):
+                        if re.match(r'^\d+\.\d+\.\d+\.\d+$', tok) and tok != "<none>":
+                            pod_ip = tok
+                            if idx + 1 < len(tokens):
+                                node = tokens[idx + 1]
+                            break
+                        if tok == "<none>":
+                            pod_ip = "<none>"
+                    pods[name] = {
+                        "ready": ready, "phase": phase,
+                        "restarts": restarts,
+                        "pod_ip": pod_ip,
+                        "node": node,
                     }
             elif section == "started":
                 p = line.split()
@@ -812,7 +829,7 @@ class KubectlOaiCoreAdapter:
                 "kind": CORE_KIND_LABELS.get(comp_id, comp_id.upper()),
                 "status": status,
                 "detail": " • ".join(detail_bits),
-                "host": self._ssh["host"],   # target SSH console
+                "host": info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else self._ssh["host"],
                 "cpu_pct": met.get("cpu_pct", 0.0),
                 "mem_gb": round(met.get("mem_mi", 0.0) / 1024.0, 2),
                 "mem_pct": 0.0,  # persen butuh kapasitas node; sengaja 0 (jujur)
@@ -1059,13 +1076,28 @@ class KubectlOpen5gsCoreAdapter:
             if not line:
                 continue
             if section == "pods":
-                p = line.split(None, 8)
-                if len(p) >= 6:
-                    pods[p[0]] = {
-                        "ready": p[1], "phase": p[2],
-                        "restarts": p[3],
-                        "pod_ip": p[5] if len(p) > 5 else "",
-                        "node": p[6] if len(p) > 6 else "",
+                import re
+                tokens = line.split()
+                if len(tokens) >= 6:
+                    name = tokens[0]
+                    ready = tokens[1] if len(tokens) > 1 else ""
+                    phase = tokens[2] if len(tokens) > 2 else ""
+                    restarts = tokens[3] if len(tokens) > 3 else "0"
+                    pod_ip = ""
+                    node = ""
+                    for idx, tok in enumerate(tokens):
+                        if re.match(r'^\d+\.\d+\.\d+\.\d+$', tok) and tok != "<none>":
+                            pod_ip = tok
+                            if idx + 1 < len(tokens):
+                                node = tokens[idx + 1]
+                            break
+                        if tok == "<none>":
+                            pod_ip = "<none>"
+                    pods[name] = {
+                        "ready": ready, "phase": phase,
+                        "restarts": restarts,
+                        "pod_ip": pod_ip,
+                        "node": node,
                     }
             elif section == "started":
                 p = line.split()
