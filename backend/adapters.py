@@ -1522,53 +1522,6 @@ class SshRanAdapter:
         except Exception:
             pass
         return 0
-        if gtype == "nr-softmodem":
-            cfg["type"] = "OAI nr-softmodem"
-            m = re.search(r"-O\s+(\S+)", args)
-            path = m.group(1) if m else None
-            if path and "/" not in path:
-                path = f"/home/ran/{path}"
-            if path:
-                try:
-                    o, _ = self._exec(f"grep -iE 'dl_frequencyBand|dl_carrierBandwidth|bands[[:space:]]*=' {path} | head -5")
-                    for ln in o.splitlines():
-                        kv = re.search(r'([A-Za-z_]+)\s*=\s*([^;]+)', ln)
-                        if kv:
-                            k, v = kv.group(1).lower(), kv.group(2).strip()
-                            if "band" in k and not cfg["band"]:
-                                cfg["band"] = v
-                            elif "carrierbandwidth" in k and not cfg["bw"]:
-                                cfg["bw"] = v
-                    cfg["conf"] = path
-                except Exception:
-                    pass
-        else:
-            cfg["type"] = "srsRAN gNB"
-            m = re.search(r"-c\s+(\S+)", args)
-            path = m.group(1) if m else None
-            if path and not path.startswith("/"):
-                path = f"/home/ran/{path}"
-            cfg["conf"] = path or ""
-            if path:
-                try:
-                    o, _ = self._exec(
-                        f"grep -iE 'band:|dl_arfcn:|channel_bandwidth_MHz|plmn:' {path} | head -8")
-                    for ln in o.splitlines():
-                        kv = re.search(r'([A-Za-z_]+)\s*:\s*"?([A-Za-z0-9_.]+)', ln)
-                        if kv:
-                            k = kv.group(1).lower()
-                            v = kv.group(2)
-                            if k == "band":
-                                cfg["band"] = v
-                            elif k == "dl_arfcn":
-                                cfg["arfcn"] = v
-                            elif "bandwidth" in k:
-                                cfg["bw"] = v
-                            elif k == "plmn":
-                                cfg["plmn"] = v
-                except Exception:
-                    pass
-        return cfg
 
     def _down(self, reason) -> dict:
         return {

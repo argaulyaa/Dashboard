@@ -38,7 +38,7 @@ function formatUptime(seconds) {
 }
 
 // Ilustrasi "Coverage Map" -- ILLUSTRATIVE ONLY, not from testbed.
-// Hidden for provider oai (real data only). SVG statis, murni dekoratif, tidak terikat data asli.
+// Hidden for ALL providers (only real metrics shown). SVG statis, murni dekoratif, tidak terikat data asli.
 function CoverageMapArt() {
   return (
     <svg className="absolute inset-0 w-full h-full" viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice">
@@ -278,8 +278,8 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
       </div>
 
       <div className="grid grid-cols-12 gap-6">
-          {/* Main Status Card (Featured) — for oai show full width (only real data), srsran keep 8-col + coverage map */}
-          <div className={`${activeProvider === "oai" ? "col-span-12" : "col-span-12 lg:col-span-8"} bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant overflow-hidden flex flex-col`}>
+          {/* Main Status Card (Featured) — full-width for all providers, only real testbed data (srsran cleanup same as oai 38145cc) */}
+          <div className={`col-span-12 bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant overflow-hidden flex flex-col`}>
             <div className="p-6 border-b border-outline-variant flex justify-between items-center">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 bg-secondary-container/30 rounded-xl flex items-center justify-center text-secondary">
@@ -319,9 +319,8 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
               ) : null}
             </div>
 
-            {/* Hero metrics: ONLY real testbed data for provider oai — Architecture/Interface (CU/DU, F1-C/U) removed (mock), Throughput removed */}
-            {activeProvider === "oai" ? (
-              <div className="p-6 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-6">
+            {/* Hero metrics: ONLY real testbed data for ALL providers (38145cc extended to srsran) — Architecture CU/DU, Interface F1-C/U, Throughput mock removed */}
+            <div className="p-6 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-6">
                 <div className="space-y-6">
                   <div className="h-12 flex flex-col justify-center gap-2">
                     <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Implementation</p>
@@ -371,62 +370,6 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
                   </div>
                 </div>
               </div>
-            ) : (
-              <div className="p-6 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-6">
-                <div className="space-y-6">
-                  <div className="h-12 flex flex-col justify-center gap-2">
-                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Implementation</p>
-                    <p className="text-on-surface text-body-md font-bold">{hero?.kind || activeMeta?.label || "gNB"}</p>
-                  </div>
-                  <div className="h-12 flex flex-col justify-center gap-2">
-                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Architecture</p>
-                    <p className="text-on-surface text-body-md font-bold">CU/DU Split <span className="text-[10px] font-normal text-outline">(illustrative)</span></p>
-                  </div>
-                  <div className="h-12 flex flex-col justify-center gap-2">
-                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Interface</p>
-                    <p className="text-primary text-body-md font-bold">F1-C / F1-U <span className="text-[10px] font-normal text-outline">(illustrative)</span></p>
-                  </div>
-                </div>
-                <div className="space-y-6">
-                  <div className="h-12 flex flex-col justify-center gap-2">
-                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Latency</p>
-                    <p className="text-secondary text-body-md font-bold">{hero?.latency_ms ?? "-"}ms</p>
-                  </div>
-                  <div className="h-12 flex flex-col justify-center gap-2">
-                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Uptime</p>
-                    <p className="text-on-surface text-body-md font-bold">{formatUptime(hero?.uptime_seconds)}</p>
-                  </div>
-                  <div className="h-12 flex flex-col justify-center gap-2">
-                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Active UEs</p>
-                    <p className="text-on-surface text-body-md font-bold">{hero?.active_ues ?? 0}</p>
-                  </div>
-                </div>
-                <div className="space-y-6">
-                  <div className="h-12 flex flex-col justify-center gap-2">
-                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">CPU</p>
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 h-1.5 bg-surface-container rounded-full overflow-hidden">
-                        <div className="h-full bg-primary" style={{ width: `${hero?.cpu_pct ?? 0}%` }} />
-                      </div>
-                      <span className="text-on-surface text-body-md font-bold">{hero?.cpu_pct ?? 0}%</span>
-                    </div>
-                  </div>
-                  <div className="h-12 flex flex-col justify-center gap-2">
-                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Memory</p>
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 h-1.5 bg-surface-container rounded-full overflow-hidden">
-                        <div className="h-full bg-tertiary" style={{ width: `${hero?.mem_pct ?? 0}%` }} />
-                      </div>
-                      <span className="text-on-surface text-body-md font-bold">{hero?.mem_gb ?? 0}GB</span>
-                    </div>
-                  </div>
-                  <div className="h-12 flex flex-col justify-center gap-2">
-                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Status detail</p>
-                    <p className="text-on-surface text-body-md font-bold">{hero?.detail || "-"}</p>
-                  </div>
-                </div>
-              </div>
-            )}
 
             <div className="mt-auto p-6 bg-surface-container-low flex justify-between items-center">
               <div className="flex -space-x-2">
@@ -510,8 +453,8 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
             />
           )}
 
-          {/* Coverage Map Card — ILLUSTRATIVE ONLY, hidden for provider oai (real data only) */}
-          {activeProvider !== "oai" && (
+          {/* Coverage Map — ILLUSTRATIVE ONLY, hidden for all providers (only real metrics shown in hero/table). Keep component for future illustrative use. */}
+          {false && activeProvider !== "oai" && (
             <div className="col-span-12 lg:col-span-4 bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant p-6 flex flex-col">
               <h3 className="text-title-md font-bold mb-4">Coverage Map <span className="text-[10px] font-normal text-outline">(illustrative)</span></h3>
               <div className="flex-1 rounded-lg bg-surface-container overflow-hidden relative min-h-[240px]">
