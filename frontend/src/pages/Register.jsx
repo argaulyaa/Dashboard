@@ -5,7 +5,8 @@ import { register } from "../auth.js";
 const SERVER_ERROR_MESSAGES = {
   username_taken: "Username already taken, please choose another",
   username_required: "Please enter a username.",
-  email_taken: "That email address is already registered.",
+  email_taken: "Email already registered",
+  email_exists: "Email already registered",
   invalid_email: "Please enter a valid email address.",
   password_too_short: "Password must be at least 8 characters.",
   password_needs_uppercase: "Password must include at least 1 uppercase letter.",
@@ -46,14 +47,9 @@ export default function Register({ onLoginSuccess }) {
       // Backend mengirim OTP ke email — arahkan ke halaman verifikasi
       navigate("/verify", { state: { username, email } });
     } catch (err) {
-      // Duplicate username handling: block registration and require different username
-      const msg = SERVER_ERROR_MESSAGES[err.message] || err.message || "Failed to create account. Please try again.";
-      // Ensure username_taken shows the required alert text even if backend phrasing varies
-      if (err.message === "username_taken" || String(err.message).includes("username_taken") || String(msg).toLowerCase().includes("already")) {
-        setError("Username already taken, please choose another");
-      } else {
-        setError(msg);
-      }
+      const code = (err.message || "").trim();
+      const msg = SERVER_ERROR_MESSAGES[code] || code || "Failed to create account. Please try again.";
+      setError(msg);
     } finally {
       setIsSubmitting(false);
     }

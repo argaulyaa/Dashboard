@@ -230,6 +230,9 @@ def verify_registration_otp(username: str, otp_code: str) -> dict:
         if db.query(UserModel).filter(UserModel.username == pending.username).first():
             db.delete(pending)
             raise ValueError("username_taken")
+        if pending.email and db.query(UserModel).filter(UserModel.email == pending.email.lower()).first():
+            db.delete(pending)
+            raise ValueError("email_taken")
 
         user = UserModel(
             username=pending.username,
@@ -297,6 +300,8 @@ def register_user(username: str, password: str, full_name: str = "", role: str =
         existing = db.query(UserModel).filter(UserModel.username == username).first()
         if existing:
             raise ValueError("username_taken")
+        if email and email.strip() and db.query(UserModel).filter(UserModel.email == email.strip().lower()).first():
+            raise ValueError("email_taken")
 
         user = UserModel(
             username=username,
