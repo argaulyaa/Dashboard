@@ -1,624 +1,287 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { getRole } from "../user.js";
 import {
-  createReservation,
-  cancelReservation,
-  fetchMyReservations,
-  fetchAllReservations,
+  bookReservation,
+  fetchMyBookings,
+  fetchAllBookings,
+  fetchActiveBooking,
+  approveBooking,
+  rejectBooking,
+  cancelBooking,
+  connectRan,
+  disconnectRan,
+  fetchProviders,
 } from "../api.js";
 
-
-const DOMAIN_ICON = {
-  core: "memory",
-  ran: "settings_input_antenna",
-  ric: "lan",
-};
-
-function formatSlotTime(ts) {
-  if (!ts) return "";
-  const d = new Date(ts * 1000);
-  const now = new Date();
-  const isToday =
-    d.getDate() === now.getDate() &&
-    d.getMonth() === now.getMonth() &&
-    d.getFullYear() === now.getFullYear();
-
-  const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-  if (isToday) return `Today, ${timeStr}`;
-
-  const monthStr = d.toLocaleDateString([], { month: "short", day: "numeric" });
-  return `${monthStr}, ${timeStr}`;
+function formatTime(ts) {
+  if (!ts) return "-";
+  return new Date(ts * 1000).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
-
-function formatFullSlot(startTs, endTs) {
-  if (!startTs || !endTs) return "-";
-  const startObj = new Date(startTs * 1000);
-  const endObj = new Date(endTs * 1000);
-  const now = new Date();
-
-  const isToday =
-    startObj.getDate() === now.getDate() &&
-    startObj.getMonth() === now.getMonth() &&
-    startObj.getFullYear() === now.getFullYear();
-
-  const startTime = startObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-  const endTime = endObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-
-  const dateLabel = isToday ? "Today" : startObj.toLocaleDateString([], { month: "short", day: "numeric" });
-  return `${dateLabel} | ${startTime} - ${endTime}`;
+function formatCountdown(sec) {
+  if (sec <= 0) return "00:00:00";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
-
-function computeDurationLabel(startTs, endTs) {
-  if (!startTs || !endTs || endTs <= startTs) return "0m";
-  const diffMinutes = Math.round((endTs - startTs) / 60);
-  const h = Math.floor(diffMinutes / 60);
-  const m = diffMinutes % 60;
-  if (h > 0 && m > 0) return `${h}h ${m}m`;
-  if (h > 0) return `${h}h`;
-  return `${m}m`;
-}
-
-function initials(name) {
-  if (!name) return "?";
-  const parts = name.trim().split(" ");
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
-
-export default function ReservationPage({ data, currentUser, onReservationChange }) {
-  const [myReservations, setMyReservations] = useState([]);
-  const [allReservations, setAllReservations] = useState([]);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState("schedule"); // "reserve" | "schedule" | "book"
-  const [targetNode, setTargetNode] = useState(null); // { domain, id, name, host }
-
-  // Modal form states
-  const [formDate, setFormDate] = useState("");
-  const [formStart, setFormStart] = useState("");
-  const [formEnd, setFormEnd] = useState("");
-  const [formNote, setFormNote] = useState("");
-  const [modalError, setModalError] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [cancellingId, setCancellingId] = useState(null);
-
-  // Flatten all components across core, ran, ric
-  const allNodes = useMemo(() => {
-    const list = [];
-    Object.entries(data || {}).forEach(([domain, comps]) => {
-      (comps || []).forEach((c) => {
-        if (c.id) {
-          list.push({ ...c, domain, host: c.host || "127.0.0.1" });
-        }
-      });
-    });
-    return list;
-  }, [data]);
-
-  const loadReservations = async () => {
-    try {
-      const [mine, all] = await Promise.all([
-        currentUser ? fetchMyReservations(currentUser) : Promise.resolve([]),
-        fetchAllReservations(),
-      ]);
-      setMyReservations(mine);
-      setAllReservations(all);
-    } catch {
-      // Ignore background fetch error
-    }
+function statusBadge(s) {
+  const map = {
+    pending: "bg-amber-100 text-amber-800 border-amber-200",
+    active: "bg-emerald-100 text-emerald-800 border-emerald-200",
+    done: "bg-gray-100 text-gray-600 border-gray-200",
+    cancelled: "bg-red-100 text-red-700 border-red-200",
+    rejected: "bg-red-100 text-red-700 border-red-200",
   };
+  return map[s] || "bg-gray-100 text-gray-600";
+}
 
+export default function ReservationPage({ data, currentUser }) {
+  const role = getRole();
+  const isAdmin = currentUser === "admin" || role === "admin";
+
+  // providers for dropdowns
+  const [coreProviders, setCoreProviders] = useState([]);
+  const [ranProviders, setRanProviders] = useState([]);
   useEffect(() => {
-    loadReservations();
-    const interval = setInterval(loadReservations, 5000);
-    return () => clearInterval(interval);
-  }, [currentUser]);
+    fetchProviders("core").then(setCoreProviders).catch(() => setCoreProviders([{ key: "oai", label: "OAI" }]));
+    fetchProviders("ran").then(setRanProviders).catch(() => setRanProviders([{ key: "oai", label: "OAI" }]));
+  }, []);
 
-  // Compute stats
-  const activeLocksCount = useMemo(() => {
-    return allReservations.filter((r) => r.is_active).length;
-  }, [allReservations]);
+  // form
+  const [coreProv, setCoreProv] = useState("");
+  const [ranProv, setRanProv] = useState("");
+  const [startAt, setStartAt] = useState("");
+  const [endAt, setEndAt] = useState("");
+  useEffect(() => {
+    if (coreProviders.length && !coreProv) setCoreProv(coreProviders[0].key);
+  }, [coreProviders]);
+  useEffect(() => {
+    if (ranProviders.length && !ranProv) setRanProv(ranProviders[0].key);
+  }, [ranProviders]);
 
-  const nextAvailableInfo = useMemo(() => {
-    const now = Math.floor(Date.now() / 1000);
-    if (allNodes.length === 0) return { name: "No nodes", label: "No infrastructure available" };
+  const [myBookings, setMyBookings] = useState([]);
+  const [allBookings, setAllBookings] = useState([]);
+  const [activeBooking, setActiveBooking] = useState(null);
+  const [err, setErr] = useState("");
+  const [okMsg, setOkMsg] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [connectBusy, setConnectBusy] = useState(false);
 
-    // Find the node with the earliest free time
-    let earliestNode = allNodes[0];
-    let earliestTime = Infinity;
-
-    allNodes.forEach((node) => {
-      const nodeRes = allReservations
-        .filter((r) => r.domain === node.domain && r.component_id === node.id)
-        .sort((a, b) => a.start_at - b.start_at);
-
-      let freeTime = now;
-      for (const r of nodeRes) {
-        if (freeTime < r.start_at) break;
-        if (freeTime < r.end_at) freeTime = r.end_at;
-      }
-      if (freeTime < earliestTime) {
-        earliestTime = freeTime;
-        earliestNode = node;
-      }
-    });
-
-    if (earliestTime <= now + 60) {
-      return { name: earliestNode.name, label: "Available Now" };
-    }
-    return { name: earliestNode.name, label: formatSlotTime(earliestTime) };
-  }, [allNodes, allReservations]);
-
-  const openReserveModal = (node, prefillStartTs = null, mode = "schedule") => {
-    setModalMode(mode);
-    setTargetNode(node || allNodes[0] || null);
-    setModalError(null);
-
-    const baseDate = prefillStartTs ? new Date(prefillStartTs * 1000) : new Date();
-    const YYYY = baseDate.getFullYear();
-    const MM = String(baseDate.getMonth() + 1).padStart(2, "0");
-    const DD = String(baseDate.getDate()).padStart(2, "0");
-    setFormDate(`${YYYY}-${MM}-${DD}`);
-
-    let startMinutes = baseDate.getHours() * 60 + baseDate.getMinutes();
-    if (!prefillStartTs) {
-      startMinutes = Math.ceil(startMinutes / 15) * 15; // round up to next 15m
-    }
-    const startH = String(Math.floor(startMinutes / 60) % 24).padStart(2, "0");
-    const startM = String(startMinutes % 60).padStart(2, "0");
-    setFormStart(`${startH}:${startM}`);
-
-    const endMinutes = startMinutes + 60; // 1 hour default duration
-    const endH = String(Math.floor(endMinutes / 60) % 24).padStart(2, "0");
-    const endM = String(endMinutes % 60).padStart(2, "0");
-    setFormEnd(`${endH}:${endM}`);
-
-    setFormNote("");
-    setModalOpen(true);
-  };
-
-  const handleConfirmReservation = async () => {
-    if (!targetNode) return;
-    if (!currentUser) {
-      setModalError("Please log in or set username first.");
-      return;
-    }
-    if (!formDate || !formStart || !formEnd) {
-      setModalError("Please fill in date, start time, and end time.");
-      return;
-    }
-
-    const startTs = new Date(`${formDate}T${formStart}:00`).getTime() / 1000;
-    const endTs = new Date(`${formDate}T${formEnd}:00`).getTime() / 1000;
-
-    if (isNaN(startTs) || isNaN(endTs)) {
-      setModalError("Invalid date/time selection.");
-      return;
-    }
-    if (startTs >= endTs) {
-      setModalError("End time must be after start time.");
-      return;
-    }
-    if (startTs < Date.now() / 1000 - 60) {
-      setModalError("Cannot book a time slot in the past.");
-      return;
-    }
-
-    setSubmitting(true);
-    setModalError(null);
+  const load = async () => {
     try {
-      const result = await createReservation(
-        targetNode.domain,
-        targetNode.id,
-        currentUser,
-        startTs,
-        endTs,
-        formNote
-      );
-      setModalOpen(false);
-      onReservationChange?.(targetNode.domain, targetNode.id, result);
-      await loadReservations();
-    } catch (err) {
-      if (err.payload?.reason === "already_reserved") {
-        const c = err.payload.conflict;
-        const conflictLabel = c ? formatFullSlot(c.start_at, c.end_at) : "another slot";
-        setModalError(`Slot overlaps with existing booking by ${c?.user || "someone"} (${conflictLabel}).`);
-      } else {
-        setModalError(err.message || "Failed to create reservation.");
+      const mine = await fetchMyBookings();
+      setMyBookings(mine);
+      const act = mine.find((b) => b.is_active) || null;
+      // also try /active endpoint for authoritative
+      try {
+        const a = await fetchActiveBooking();
+        if (a) setActiveBooking(a);
+        else setActiveBooking(act);
+      } catch {
+        setActiveBooking(act);
       }
-    } finally {
-      setSubmitting(false);
+      if (isAdmin) {
+        const all = await fetchAllBookings();
+        setAllBookings(all);
+      }
+    } catch (e) {
+      // ignore
     }
   };
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 5000);
+    return () => clearInterval(id);
+  }, [isAdmin]);
 
-  const handleCancelReservation = async (domain, componentId, reservationId) => {
-    setCancellingId(reservationId);
+  // countdown tick
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const activeRemaining = useMemo(() => {
+    if (!activeBooking) return 0;
+    return Math.max(0, Math.floor(activeBooking.end_at * 1000 - now) / 1000);
+  }, [activeBooking, now]);
+
+  const handleBook = async (e) => {
+    e.preventDefault();
+    setErr(""); setOkMsg("");
+    if (!coreProv || !ranProv || !startAt || !endAt) { setErr("Fill core, ran, start and end"); return; }
+    const startTs = new Date(startAt).getTime() / 1000;
+    const endTs = new Date(endAt).getTime() / 1000;
+    if (isNaN(startTs) || isNaN(endTs) || startTs >= endTs) { setErr("Invalid time range"); return; }
+    setLoading(true);
     try {
-      await cancelReservation(domain, componentId, currentUser, reservationId);
-      await loadReservations();
-      onReservationChange?.(domain, componentId, null);
-    } catch (err) {
-      alert(err.message || "Failed to cancel reservation");
-    } finally {
-      setCancellingId(null);
-    }
+      await bookReservation(coreProv, ranProv, startTs, endTs);
+      setOkMsg("Booking created (pending approval)");
+      setStartAt(""); setEndAt("");
+      await load();
+    } catch (ex) {
+      const msg = ex.payload?.message || ex.message || "Book failed";
+      if (ex.status === 409) setErr(`Slot taken: ${msg}`);
+      else setErr(msg);
+    } finally { setLoading(false); }
   };
 
-  // Compute live modal duration
-  const modalDurationText = useMemo(() => {
-    if (!formDate || !formStart || !formEnd) return "0m";
-    const startTs = new Date(`${formDate}T${formStart}:00`).getTime() / 1000;
-    const endTs = new Date(`${formDate}T${formEnd}:00`).getTime() / 1000;
-    return computeDurationLabel(startTs, endTs);
-  }, [formDate, formStart, formEnd]);
+  const handleCancel = async (id) => {
+    try { await cancelBooking(id); await load(); } catch (ex) { alert(ex.payload?.message || ex.message); }
+  };
+  const handleApprove = async (id) => {
+    try { await approveBooking(id); await load(); } catch (ex) { alert(ex.payload?.message || ex.message); }
+  };
+  const handleReject = async (id) => {
+    try { await rejectBooking(id); await load(); } catch (ex) { alert(ex.payload?.message || ex.message); }
+  };
+  const handleConnect = async (disco = false) => {
+    if (!activeBooking && !isAdmin) { alert("No active reservation"); return; }
+    const cp = activeBooking ? activeBooking.core_provider : coreProv;
+    const rp = activeBooking ? activeBooking.ran_provider : ranProv;
+    setConnectBusy(true);
+    try {
+      const res = disco ? await disconnectRan(cp, rp) : await connectRan(cp, rp, false);
+      alert(`${disco ? "Disconnect" : "Connect"}: ${res.status || "ok"} ${res.sctp_estab ? "(SCTP ESTAB)" : ""}`);
+    } catch (ex) {
+      const m = ex.payload?.message || ex.message;
+      alert(`Failed: ${m}`);
+    } finally { setConnectBusy(false); }
+  };
 
   return (
-    <div className="max-w-[1600px] mx-auto space-y-gutter">
-      {/* Top Title & Header */}
-      <div className="mb-4">
-        <h2 className="font-headline-md text-headline-md text-on-surface">Node Reservations</h2>
-        <p className="font-body-md text-body-md text-on-surface-variant opacity-70">
-          Monitor and manage access to RAN infrastructure nodes.
-        </p>
+    <div className="max-w-[1600px] mx-auto space-y-6">
+      <div>
+        <h2 className="font-headline-md text-headline-md text-on-surface">Reservation Booking</h2>
+        <p className="text-on-surface-variant opacity-70">Book exclusive Core↔RAN session to prevent concurrent gNB/Core chaos.</p>
       </div>
 
-      {/* Bento Grid Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-gutter">
-        <div className="md:col-span-1 bg-surface-container-lowest p-6 rounded-xl border border-outline-variant shadow-sm">
-          <p className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider mb-2">
-            Total Nodes
-          </p>
-          <p className="font-display-lg text-display-lg text-primary">
-            {String(allNodes.length).padStart(2, "0")}
-          </p>
-        </div>
-        <div className="md:col-span-1 bg-surface-container-lowest p-6 rounded-xl border border-outline-variant shadow-sm">
-          <p className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider mb-2">
-            Active Locks
-          </p>
-          <p className="font-display-lg text-display-lg text-secondary">
-            {String(activeLocksCount).padStart(2, "0")}
-          </p>
-        </div>
-        <div className="md:col-span-2 bg-primary p-6 rounded-xl shadow-lg text-on-primary flex justify-between items-center overflow-hidden relative">
-          <div className="relative z-10">
-            <p className="font-label-sm text-label-sm text-primary-fixed uppercase tracking-wider mb-2">
-              Next Available Slot
-            </p>
-            <p className="font-headline-md text-headline-md">{nextAvailableInfo.label}</p>
-            <p className="font-body-md text-body-md opacity-80">{nextAvailableInfo.name}</p>
+      {/* Active countdown */}
+      {activeBooking ? (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-bold text-emerald-800">Active Session</p>
+            <p className="text-sm text-emerald-700">{activeBooking.core_provider} / {activeBooking.ran_provider} • {formatTime(activeBooking.start_at)} → {formatTime(activeBooking.end_at)}</p>
+            <p className="text-xs text-emerald-600">Status: {activeBooking.status} • remaining {formatCountdown(Math.floor(activeRemaining))}</p>
           </div>
-          <span className="material-symbols-outlined text-[80px] opacity-20 absolute -right-4 -bottom-4">
-            schedule
-          </span>
+          <div className="flex gap-2">
+            <button onClick={() => handleConnect(false)} disabled={connectBusy || (!isAdmin && !activeBooking?.is_active)} className="px-5 py-2 bg-emerald-600 text-white rounded-lg font-bold disabled:opacity-40 hover:bg-emerald-700">
+              {connectBusy ? "..." : "Connect now"}
+            </button>
+            <button onClick={() => handleConnect(true)} disabled={connectBusy} className="px-4 py-2 border border-emerald-600 text-emerald-700 rounded-lg font-bold disabled:opacity-40">Disconnect</button>
+          </div>
         </div>
+      ) : (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between gap-4">
+          <p className="text-sm text-amber-800">No active reservation — book a slot and wait for admin approval. {isAdmin && "Admin can connect without booking."}</p>
+          <button onClick={() => handleConnect(false)} disabled={!isAdmin || connectBusy} className={`px-4 py-2 rounded-lg font-bold ${isAdmin ? "bg-primary text-white" : "bg-gray-200 text-gray-400 cursor-not-allowed"}`} title={isAdmin ? "Admin bypass" : "Only active session can connect"}>
+            Connect {isAdmin ? "(admin bypass)" : "(need active)"}
+          </button>
+        </div>
+      )}
+
+      {/* Book Session form */}
+      <div className="bg-white rounded-xl border border-outline-variant shadow-sm p-6">
+        <h3 className="font-title-md text-title-md mb-4">Book Session</h3>
+        <form onSubmit={handleBook} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Core Provider</label>
+            <select value={coreProv} onChange={(e) => setCoreProv(e.target.value)} className="w-full mt-1 px-3 py-2 border border-outline-variant rounded-lg bg-white">
+              {coreProviders.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">RAN Provider</label>
+            <select value={ranProv} onChange={(e) => setRanProv(e.target.value)} className="w-full mt-1 px-3 py-2 border border-outline-variant rounded-lg bg-white">
+              {ranProviders.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Start</label>
+            <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} className="w-full mt-1 px-3 py-2 border border-outline-variant rounded-lg" />
+          </div>
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">End</label>
+            <input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} className="w-full mt-1 px-3 py-2 border border-outline-variant rounded-lg" />
+          </div>
+          <button type="submit" disabled={loading} className="px-6 py-2 bg-primary text-white rounded-lg font-bold disabled:opacity-50 hover:bg-primary/90">
+            {loading ? "Booking..." : "Book"}
+          </button>
+        </form>
+        {err && <p className="mt-3 text-sm text-red-600 font-mono">{err}</p>}
+        {okMsg && <p className="mt-3 text-sm text-emerald-600">{okMsg}</p>}
+        <p className="mt-2 text-xs text-on-surface-variant">Overlap with any pending/active booking → 409 Slot taken.</p>
       </div>
 
-      {/* My Reservations Widget */}
-      <div className="bg-surface-container-lowest p-6 rounded-xl border border-outline-variant shadow-sm">
-        <h3 className="font-title-md text-title-md text-on-surface mb-4">My Reservations</h3>
-        <div className="space-y-3">
-          {myReservations.length === 0 && (
-            <p className="text-on-surface-variant text-body-md py-4 text-center font-mono">
-              You have no active or scheduled reservations.
-            </p>
-          )}
-          {myReservations.map((r) => {
-            const comp = allNodes.find((n) => n.domain === r.domain && n.id === r.component_id);
-            const compName = comp?.name || r.component_id;
-            return (
-              <div
-                key={r.id}
-                className={`flex items-center justify-between p-4 rounded-lg border flex-wrap gap-4 ${
-                  r.is_active
-                    ? "bg-primary-container/5 border-primary/20"
-                    : "bg-surface-container-low border-outline-variant"
-                }`}
-              >
-                <div className="flex items-center gap-4">
-                  <div
-                    className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                      r.is_active
-                        ? "bg-primary/10 text-primary"
-                        : "bg-surface-container-high text-on-surface-variant"
-                    }`}
-                  >
-                    <span className="material-symbols-outlined">
-                      {DOMAIN_ICON[r.domain] || "hub"}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="font-title-md text-title-md text-on-surface">{compName}</p>
-                    <p className="font-body-md text-body-md text-on-surface-variant">
-                      {formatFullSlot(r.start_at, r.end_at)}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4">
-                  {r.is_active ? (
-                    <>
-                      <span className="px-3 py-1 bg-secondary-container text-on-secondary-container text-xs font-bold rounded-full">
-                        Active Now
-                      </span>
-                      <Link
-                        className="px-4 py-2 bg-primary text-on-primary font-label-lg text-label-lg rounded-lg shadow-md hover:bg-primary-container transition-all"
-                        to={`/ssh/${r.domain}/${r.component_id}`}
-                      >
-                        Console
-                      </Link>
-                    </>
-                  ) : (
-                    <>
-                      <span className="px-3 py-1 bg-surface-container-highest text-on-surface-variant text-xs font-bold rounded-full">
-                        Upcoming
-                      </span>
-                      <button
-                        className="px-4 py-2 border border-outline-variant text-on-surface-variant font-label-lg text-label-lg rounded-lg hover:bg-surface-container transition-all disabled:opacity-50"
-                        onClick={() => handleCancelReservation(r.domain, r.component_id, r.id)}
-                        disabled={cancellingId === r.id}
-                      >
-                        {cancellingId === r.id ? "..." : "Cancel"}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Available Infrastructure Table */}
-      <div className="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-[0_4px_12px_rgba(0,0,0,0.06)] overflow-hidden">
-        <div className="px-6 py-4 border-b border-outline-variant bg-surface-bright flex items-center justify-between flex-wrap gap-3">
-          <h3 className="font-title-md text-title-md text-on-surface">Available Infrastructure</h3>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-surface-container-low text-[11px] uppercase tracking-wider font-bold text-on-surface-variant whitespace-nowrap">
-                <th className="px-6 py-3">Node ID</th>
-                <th className="px-6 py-3">Type</th>
-                <th className="px-6 py-3">Current Owner</th>
-                <th className="px-6 py-3">Scheduled Slot</th>
-                <th className="px-6 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-outline-variant text-sm whitespace-nowrap">
-              {allNodes.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-6 py-6 text-center text-on-surface-variant text-xs font-mono">
-                    No components with console access available.
-                  </td>
-                </tr>
-              )}
-              {allNodes.map((node) => {
-                const nodeRes = allReservations.filter(
-                  (r) => r.domain === node.domain && r.component_id === node.id
-                );
-                const activeRes = nodeRes.find((r) => r.is_active);
-                const upcomingRes = nodeRes.filter((r) => r.is_upcoming).sort((a, b) => a.start_at - b.start_at);
-
-                const heldByMe = activeRes && activeRes.user === currentUser;
-                const heldByOther = activeRes && !heldByMe;
-
-                // Determine row highlight
-                let rowBg = "hover:bg-surface-container-low transition-colors";
-                if (heldByMe) {
-                  rowBg = "bg-primary-container/5 hover:bg-primary-container/10 transition-colors";
-                }
-
-                return (
-                  <tr key={`${node.domain}-${node.id}`} className={rowBg}>
-                    <td className="px-6 py-3">
-                      <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-primary text-[20px]">
-                          {DOMAIN_ICON[node.domain] || "router"}
-                        </span>
-                        <span className="font-bold text-sm text-on-surface">{node.name}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-3">
-                      <span className="px-2 py-0.5 bg-surface-container-high text-on-surface-variant rounded text-[10px] font-bold uppercase tracking-tighter">
-                        {node.kind}
-                      </span>
-                    </td>
-                    <td className="px-6 py-3 text-xs">
-                      {heldByMe && (
-                        <div className="flex items-center gap-2">
-                          <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center text-[9px] font-bold text-white">
-                            ME
-                          </div>
-                          <span className="font-bold">You</span>
-                        </div>
-                      )}
-                      {heldByOther && (
-                        <div className="flex items-center gap-2">
-                          <div className="w-5 h-5 rounded-full bg-secondary-container flex items-center justify-center text-[9px] font-bold text-on-secondary-container">
-                            {initials(activeRes.user)}
-                          </div>
-                          <span>{activeRes.user}</span>
-                        </div>
-                      )}
-                      {!activeRes && (
-                        <span className="text-on-surface-variant italic">
-                          Unoccupied
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-6 py-3 font-mono text-xs">
-                      {activeRes ? (
-                        <span className="text-secondary font-bold">
-                          {formatSlotTime(activeRes.start_at).replace(", ", " ")} - {new Date(activeRes.end_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}
-                        </span>
-                      ) : upcomingRes.length > 0 ? (
-                        <span className="text-on-surface-variant">
-                          Next: {formatSlotTime(upcomingRes[0].start_at)}
-                        </span>
-                      ) : (
-                        <span className="text-on-surface-variant">
-                          No upcoming bookings
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-6 py-3 text-right">
-                      {heldByMe ? (
-                        <Link
-                          className="px-3 py-1 bg-primary text-on-primary text-xs font-bold rounded-lg shadow hover:bg-primary-container transition-all active:scale-95 inline-block"
-                          to={`/ssh/${node.domain}/${node.id}`}
-                        >
-                          Console
-                        </Link>
-                      ) : activeRes || upcomingRes.length > 0 ? (
-                        <button
-                          className="px-3 py-1 border border-primary text-primary text-xs font-bold rounded-lg hover:bg-primary hover:text-white transition-all active:scale-95"
-                          onClick={() => {
-                            const lastEnd = activeRes
-                              ? activeRes.end_at
-                              : upcomingRes[upcomingRes.length - 1].end_at;
-                            openReserveModal(node, lastEnd, "book");
-                          }}
-                        >
-                          Book Next Slot
-                        </button>
-                      ) : (
-                        <button
-                          className="px-3 py-1 bg-secondary text-on-secondary text-xs font-bold rounded-lg shadow hover:opacity-90 transition-all active:scale-95"
-                          onClick={() => openReserveModal(node, null, "schedule")}
-                        >
-                          Book Now
-                        </button>
-                      )}
+      {/* My Bookings */}
+      <div className="bg-white rounded-xl border border-outline-variant shadow-sm p-6">
+        <h3 className="font-title-md text-title-md mb-4">My Bookings</h3>
+        {myBookings.length === 0 ? (
+          <p className="text-sm text-on-surface-variant py-4 text-center">No bookings yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-surface-container-low text-[11px] uppercase tracking-wider font-bold text-on-surface-variant">
+                <tr><th className="px-4 py-2">ID</th><th className="px-4 py-2">Core</th><th className="px-4 py-2">RAN</th><th className="px-4 py-2">Start</th><th className="px-4 py-2">End</th><th className="px-4 py-2">Status</th><th className="px-4 py-2">Remaining</th><th className="px-4 py-2 text-right">Action</th></tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant">
+                {myBookings.map((b) => (
+                  <tr key={b.id} className={b.is_active ? "bg-emerald-50" : ""}>
+                    <td className="px-4 py-2 font-mono text-xs">{b.id}</td>
+                    <td className="px-4 py-2">{b.core_provider}</td>
+                    <td className="px-4 py-2">{b.ran_provider}</td>
+                    <td className="px-4 py-2">{formatTime(b.start_at)}</td>
+                    <td className="px-4 py-2">{formatTime(b.end_at)}</td>
+                    <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs border font-bold ${statusBadge(b.status)}`}>{b.status}</span>{b.is_active && <span className="ml-2 text-xs font-bold text-emerald-600 animate-pulse">● ACTIVE {formatCountdown(b.remaining_seconds)}</span>}</td>
+                    <td className="px-4 py-2 font-mono text-xs">{b.is_active ? formatCountdown(b.remaining_seconds) : "-"}</td>
+                    <td className="px-4 py-2 text-right">
+                      {(b.status === "pending" || b.status === "active") && <button onClick={() => handleCancel(b.id)} className="px-3 py-1 border border-outline-variant rounded-lg text-xs font-bold hover:bg-surface-container">Cancel</button>}
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="px-6 py-4 border-t border-outline-variant flex items-center justify-between text-on-surface-variant">
-          <p className="font-label-sm text-label-sm">Showing {allNodes.length} nodes</p>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
-      {/* Access Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-on-surface/40 backdrop-blur-sm p-4">
-          <div className="bg-surface-container-lowest w-full max-w-md rounded-2xl shadow-2xl border border-outline-variant overflow-hidden">
-            <div className="px-6 py-4 border-b border-outline-variant flex items-center justify-between bg-surface-bright">
-              <h3 className="font-title-lg text-title-lg text-on-surface">
-                {modalMode === "book"
-                  ? "Book Next Slot"
-                  : modalMode === "schedule"
-                  ? "Book Now"
-                  : "Reserve Access"}{" "}
-                — {targetNode?.name}
-              </h3>
-              <button
-                className="material-symbols-outlined text-on-surface-variant hover:bg-surface-container rounded-full p-1"
-                onClick={() => setModalOpen(false)}
-              >
-                close
-              </button>
+      {/* Admin view */}
+      {isAdmin && (
+        <div className="bg-white rounded-xl border border-outline-variant shadow-sm p-6">
+          <h3 className="font-title-md text-title-md mb-4">All Bookings (Admin)</h3>
+          {allBookings.length === 0 ? (
+            <p className="text-sm text-on-surface-variant py-4 text-center">No bookings.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-surface-container-low text-[11px] uppercase tracking-wider font-bold text-on-surface-variant">
+                  <tr><th className="px-4 py-2">User</th><th className="px-4 py-2">Core/RAN</th><th className="px-4 py-2">Start → End</th><th className="px-4 py-2">Status</th><th className="px-4 py-2 text-right">Actions</th></tr>
+                </thead>
+                <tbody className="divide-y divide-outline-variant">
+                  {allBookings.map((b) => (
+                    <tr key={b.id}>
+                      <td className="px-4 py-2 font-bold">{b.user}</td>
+                      <td className="px-4 py-2">{b.core_provider}/{b.ran_provider}</td>
+                      <td className="px-4 py-2 text-xs">{formatTime(b.start_at)} → {formatTime(b.end_at)}</td>
+                      <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs border font-bold ${statusBadge(b.status)}`}>{b.status}</span></td>
+                      <td className="px-4 py-2 text-right space-x-2">
+                        {b.status === "pending" && <>
+                          <button onClick={() => handleApprove(b.id)} className="px-3 py-1 bg-emerald-600 text-white rounded-lg text-xs font-bold">Approve</button>
+                          <button onClick={() => handleReject(b.id)} className="px-3 py-1 bg-red-600 text-white rounded-lg text-xs font-bold">Reject</button>
+                        </>}
+                        {(b.status === "pending" || b.status === "active") && <button onClick={() => handleCancel(b.id)} className="px-3 py-1 border rounded-lg text-xs font-bold">Cancel</button>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1">
-                  Target Component
-                </label>
-                <div className="w-full p-2.5 bg-surface-container-low border border-outline-variant rounded-lg font-body-md font-bold text-on-surface flex items-center justify-between">
-                  <span>{targetNode?.name}</span>
-                  <span className="text-xs font-mono font-normal text-on-surface-variant px-2 py-0.5 bg-surface-container rounded uppercase">
-                    {targetNode?.domain} &middot; {targetNode?.kind}
-                  </span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1">
-                  Date
-                </label>
-                <input
-                  className="w-full p-2.5 bg-surface-container-low border border-outline-variant rounded-lg font-body-md"
-                  type="date"
-                  value={formDate}
-                  onChange={(e) => setFormDate(e.target.value)}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1">
-                    Start Time
-                  </label>
-                  <input
-                    className="w-full p-2.5 bg-surface-container-low border border-outline-variant rounded-lg font-body-md"
-                    type="time"
-                    value={formStart}
-                    onChange={(e) => setFormStart(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1">
-                    End Time
-                  </label>
-                  <input
-                    className="w-full p-2.5 bg-surface-container-low border border-outline-variant rounded-lg font-body-md"
-                    type="time"
-                    value={formEnd}
-                    onChange={(e) => setFormEnd(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <p className="text-secondary font-label-sm text-label-sm font-bold">
-                Duration: {modalDurationText}
-              </p>
-
-              <div>
-                <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1">
-                  Purpose (Optional)
-                </label>
-                <textarea
-                  className="w-full p-2.5 bg-surface-container-low border border-outline-variant rounded-lg font-body-md h-20"
-                  placeholder="e.g. Testing Massive MIMO beamforming algorithms..."
-                  value={formNote}
-                  onChange={(e) => setFormNote(e.target.value)}
-                />
-              </div>
-
-              {modalError && (
-                <div className="p-3 bg-error-container text-on-error-container text-xs rounded-lg font-medium">
-                  {modalError}
-                </div>
-              )}
-            </div>
-
-            <div className="px-6 py-4 bg-surface-container-low flex gap-3 justify-end">
-              <button
-                className="px-6 py-2 text-on-surface-variant font-label-lg text-label-lg hover:bg-surface-container rounded-lg transition-colors"
-                onClick={() => setModalOpen(false)}
-                disabled={submitting}
-              >
-                Cancel
-              </button>
-              <button
-                className="px-6 py-2 bg-primary text-on-primary font-label-lg text-label-lg rounded-lg shadow-md hover:bg-primary-container transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={handleConfirmReservation}
-                disabled={submitting}
-                title=""
-              >
-                {submitting
-                  ? "Booking..."
-                  : modalMode === "book" || modalMode === "schedule"
-                  ? "Confirm Booking"
-                  : "Confirm Reservation"}
-              </button>
-            </div>
-          </div>
+          )}
         </div>
       )}
     </div>

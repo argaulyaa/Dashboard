@@ -980,15 +980,128 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
             pass
 
 
-# ---- Reservation endpoints (scheduled time-slots) ----
+# ---- Booking Reservation endpoints (Core↔RAN exclusive sessions) ----
+# New booking system to prevent concurrent gNB/Core chaos. Overlap -> 409 Slot taken.
+# Persistent in booking_reservations table (BookingModel).
+import booking as booking_svc
+from datetime import datetime
+
+
+class BookRequest(BaseModel):
+    core_provider: str
+    ran_provider: str
+    start_at: float | str
+    end_at: float | str
+
+
+def _parse_ts(v: float | str) -> float:
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip()
+    # try float string
+    try:
+        return float(s)
+    except:
+        pass
+    # try ISO datetime (from datetime-local)
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.timestamp()
+        except:
+            continue
+    # try fromisoformat
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt.timestamp()
+    except:
+        raise ValueError(f"invalid time format: {s}")
+
+
+@app.post("/api/reservations/book")
+def book_reservation(body: BookRequest, current_user: str = Depends(require_user)):
+    try:
+        start_ts = _parse_ts(body.start_at)
+        end_ts = _parse_ts(body.end_at)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    result = booking_svc.book(current_user, body.core_provider, body.ran_provider, start_ts, end_ts)
+    if not result["ok"]:
+        if result.get("reason") == "slot_taken":
+            raise HTTPException(409, detail=result)
+        raise HTTPException(400, detail=result)
+    log_audit(current_user, "BOOK_RESERVATION", detail=f"{body.core_provider}/{body.ran_provider} {start_ts}->{end_ts}")
+    return result["booking"]
+
 
 @app.get("/api/reservations/my")
-def get_my_reservations(user: str):
-    return reservations.my_reservations(user)
+def get_my_bookings(current_user: str = Depends(require_user), user: str | None = Query(default=None)):
+    # support legacy query ?user= for backwards compat; prefer current_user
+    target = user or current_user
+    # non-admin can only see own; admin can query any via ?user=
+    if target != current_user and get_user_role(current_user) != "admin" and current_user != "admin":
+        raise HTTPException(403, "can only view own bookings")
+    return booking_svc.list_my(target)
 
 
 @app.get("/api/reservations/all")
-def get_all_reservations():
+def get_all_bookings(current_user: str = Depends(require_admin)):
+    return booking_svc.list_all()
+
+
+@app.get("/api/reservations/active")
+def get_active_booking(current_user: str = Depends(require_user)):
+    b = booking_svc.get_my_active_reservation(current_user)
+    return {"active": b}
+
+
+@app.post("/api/reservations/{booking_id}/approve")
+def approve_booking(booking_id: str, current_user: str = Depends(require_admin)):
+    result = booking_svc.approve(booking_id)
+    if not result["ok"]:
+        if result.get("reason") == "not_found":
+            raise HTTPException(404, detail=result)
+        if result.get("reason") == "slot_taken":
+            raise HTTPException(409, detail=result)
+        raise HTTPException(400, detail=result)
+    log_audit(current_user, "APPROVE_BOOKING", detail=f"booking {booking_id}")
+    return result["booking"]
+
+
+@app.post("/api/reservations/{booking_id}/reject")
+def reject_booking(booking_id: str, current_user: str = Depends(require_admin)):
+    result = booking_svc.reject(booking_id)
+    if not result["ok"]:
+        if result.get("reason") == "not_found":
+            raise HTTPException(404, detail=result)
+        raise HTTPException(400, detail=result)
+    log_audit(current_user, "REJECT_BOOKING", detail=f"booking {booking_id}")
+    return result["booking"]
+
+
+@app.post("/api/reservations/{booking_id}/cancel")
+def cancel_booking(booking_id: str, current_user: str = Depends(require_user)):
+    is_admin = (current_user == "admin" or get_user_role(current_user) == "admin")
+    result = booking_svc.cancel(booking_id, current_user, is_admin=is_admin)
+    if not result["ok"]:
+        if result.get("reason") == "not_found":
+            raise HTTPException(404, detail=result)
+        if result.get("reason") == "not_owner":
+            raise HTTPException(403, detail=result)
+        raise HTTPException(400, detail=result)
+    log_audit(current_user, "CANCEL_BOOKING", detail=f"booking {booking_id}")
+    return result["booking"]
+
+
+# Legacy component reservation endpoints kept under same /api/reservations/my?user= fallback above
+# For direct component queries, use /api/{domain}/components/... endpoints below.
+@app.get("/api/reservations/my-legacy")
+def get_my_reservations_legacy(user: str):
+    return reservations.my_reservations(user)
+
+
+@app.get("/api/reservations/all-legacy")
+def get_all_reservations_legacy():
     return reservations.all_reservations()
 
 
@@ -1074,7 +1187,15 @@ def ran_status(current_user: str = Depends(require_user)):
 
 @app.post("/api/ran/connect")
 def ran_connect(body: RanConnectRequest, request: Request, current_user: str = Depends(require_operator)):
-    """Hybrid Core<->RAN connect: scale core deploys + retarget RAN gNB AMF + restart unit."""
+    """Hybrid Core<->RAN connect: scale core deploys + retarget RAN gNB AMF + restart unit.
+    Gate: only user with active booking session can connect (admin bypass).
+    """
+    # --- Booking gate ---
+    is_admin = (current_user == "admin" or get_user_role(current_user) == "admin")
+    if not is_admin:
+        active = booking_svc.get_my_active_reservation(current_user)
+        if not active:
+            raise HTTPException(403, detail={"reason": "not_in_reservation", "message": "Not in reservation session - book a session first"})
     core_provider = (body.core_provider or "").strip()
     ran_provider = (body.ran_provider or "").strip()
     dry_run = bool(body.dry_run)
@@ -1259,7 +1380,14 @@ def ran_connect(body: RanConnectRequest, request: Request, current_user: str = D
 
 @app.post("/api/ran/disconnect")
 def ran_disconnect(body: RanConnectRequest, request: Request, current_user: str = Depends(require_operator)):
-    """Hybrid Core<->RAN disconnect: scale target Core to 0 + stop RAN unit."""
+    """Hybrid Core<->RAN disconnect: scale target Core to 0 + stop RAN unit.
+    Gate: only user with active booking session can disconnect (admin bypass).
+    """
+    is_admin = (current_user == "admin" or get_user_role(current_user) == "admin")
+    if not is_admin:
+        active = booking_svc.get_my_active_reservation(current_user)
+        if not active:
+            raise HTTPException(403, detail={"reason": "not_in_reservation", "message": "Not in reservation session"})
     core_provider = (body.core_provider or "").strip()
     ran_provider = (body.ran_provider or "").strip()
     if not core_provider or not ran_provider:

@@ -70,5 +70,6 @@ def get_db():
 
 def init_db():
     """Initializes database schema tables."""
-    from models import UserModel, ReservationModel, SessionModel, AuditLogModel, PendingRegistrationModel, PendingPasswordResetModel, ActiveProviderModel  # noqa
+    import models  # noqa: ensure all models imported for Base.metadata
+
     Base.metadata.create_all(bind=engine)

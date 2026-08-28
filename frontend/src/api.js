@@ -111,7 +111,8 @@ export async function cancelReservation(domain, id, user, reservationId) {
 }
 
 export async function fetchMyReservations(user) {
-  const res = await fetch(`${BASE}/reservations/my?user=${encodeURIComponent(user)}`, {
+  // New booking API: /api/reservations/my returns bookings for current_user
+  const res = await fetch(`${BASE}/reservations/my`, {
     headers: { ...authHeaders() },
   });
   if (!res.ok) throw new Error("Failed to load my reservations");
@@ -124,6 +125,87 @@ export async function fetchAllReservations() {
   });
   if (!res.ok) throw new Error("Failed to load all reservations");
   return res.json();
+}
+
+// ---- Booking reservation (Core↔RAN exclusive) ----
+export async function bookReservation(coreProvider, ranProvider, startAt, endAt) {
+  const res = await fetch(`${BASE}/reservations/book`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ core_provider: coreProvider, ran_provider: ranProvider, start_at: startAt, end_at: endAt }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(typeof data.detail === "string" ? data.detail : data.detail?.message || data.detail?.reason || "book_failed");
+    err.payload = data.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+export async function fetchMyBookings() {
+  const res = await fetch(`${BASE}/reservations/my`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("Failed to load my bookings");
+  return res.json();
+}
+
+export async function fetchAllBookings() {
+  const res = await fetch(`${BASE}/reservations/all`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("Failed to load all bookings");
+  return res.json();
+}
+
+export async function fetchActiveBooking() {
+  const res = await fetch(`${BASE}/reservations/active`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("Failed to load active booking");
+  const data = await res.json();
+  return data.active;
+}
+
+export async function approveBooking(id) {
+  const res = await fetch(`${BASE}/reservations/${encodeURIComponent(id)}/approve`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(typeof data.detail === "string" ? data.detail : data.detail?.reason || "approve_failed");
+    err.payload = data.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+export async function rejectBooking(id) {
+  const res = await fetch(`${BASE}/reservations/${encodeURIComponent(id)}/reject`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(typeof data.detail === "string" ? data.detail : data.detail?.reason || "reject_failed");
+    err.payload = data.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+export async function cancelBooking(id) {
+  const res = await fetch(`${BASE}/reservations/${encodeURIComponent(id)}/cancel`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(typeof data.detail === "string" ? data.detail : data.detail?.reason || "cancel_failed");
+    err.payload = data.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
 }
 
 export async function fetchUsers() {

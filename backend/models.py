@@ -166,3 +166,52 @@ class AuditLogModel(Base):
             "ip_address": self.ip_address,
             "timestamp": self.timestamp,
         }
+
+
+class BookingModel(Base):
+    """Reservation booking for Core↔RAN exclusive session.
+    One row per booked time slot; only one active booking at a time globally
+    (overlap check prevents concurrent gNB/Core chaos).
+    status: pending -> active (approved) -> done/cancelled
+    """
+    __tablename__ = "booking_reservations"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user = Column(String(64), nullable=False, index=True)
+    core_provider = Column(String(64), nullable=False)
+    ran_provider = Column(String(64), nullable=False)
+    start_at = Column(Float, nullable=False, index=True)
+    end_at = Column(Float, nullable=False, index=True)
+    status = Column(String(32), default="pending", nullable=False, index=True)  # pending/active/done/cancelled/rejected
+    created_at = Column(Float, default=time.time, nullable=False)
+
+    def to_dict(self, now: float | None = None) -> dict:
+        now_ts = now if now is not None else time.time()
+        is_active = self.status == "active" and self.start_at <= now_ts < self.end_at
+        is_upcoming = self.start_at > now_ts and self.status in ("pending", "active")
+        is_expired = now_ts >= self.end_at
+        remaining = max(0, int(self.end_at - now_ts)) if is_active else 0
+        effective_status = self.status
+        if is_expired and effective_status in ("pending", "active"):
+            effective_status = "done"
+        return {
+            "id": self.id,
+            "user": self.user,
+            "core_provider": self.core_provider,
+            "ran_provider": self.ran_provider,
+            "start_at": self.start_at,
+            "end_at": self.end_at,
+            "status": self.status,
+            "effective_status": effective_status,
+            "created_at": self.created_at,
+            "is_active": is_active,
+            "is_upcoming": is_upcoming,
+            "is_expired": is_expired,
+            "remaining_seconds": remaining,
+        }
+
+# Backwards-compat alias: spec names this ReservationModel, we keep that name
+# pointing to BookingModel for any external import that expects `ReservationModel`
+# with booking fields. Component-level reservations remain as ReservationModel class above
+# (we alias booking as ReservationBookingModel as well).
+ReservationBookingModel = BookingModel
