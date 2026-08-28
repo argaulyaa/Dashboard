@@ -1,6 +1,8 @@
 from __future__ import annotations
 """
 Booking reservation service for Core↔RAN exclusive sessions.
+SESSION-ONLY mode: booking reserves time slot only (user + start_at/end_at).
+Provider choice happens later during POST /api/ran/connect within active session.
 Single global resource: any overlapping booking (pending/active) is rejected -> 409 Slot taken.
 Persistent in oran_dashboard.db via BookingModel (table booking_reservations).
 """
@@ -12,7 +14,6 @@ from models import BookingModel
 
 
 VALID_STATUSES = {"pending", "active", "done", "cancelled", "rejected"}
-
 
 def _overlap_exists(start_at: float, end_at: float, exclude_id: str | None = None) -> dict | None:
     now = time.time()
@@ -29,13 +30,11 @@ def _overlap_exists(start_at: float, end_at: float, exclude_id: str | None = Non
             return row.to_dict(now)
         return None
 
-
-def book(user: str, core_provider: str, ran_provider: str, start_at: float, end_at: float) -> dict:
+def book(user: str, start_at: float, end_at: float, core_provider: str | None = None, ran_provider: str | None = None) -> dict:
+    """Create booking for time slot only. core_provider/ran_provider ignored if provided (kept for backwards compat, stored as empty)."""
     now = time.time()
     if not user or not user.strip():
         return {"ok": False, "reason": "user_required", "message": "user required"}
-    if not core_provider or not ran_provider:
-        return {"ok": False, "reason": "provider_required", "message": "core_provider and ran_provider required"}
     try:
         start_at = float(start_at)
         end_at = float(end_at)
@@ -54,7 +53,7 @@ def book(user: str, core_provider: str, ran_provider: str, start_at: float, end_
         return {
             "ok": False,
             "reason": "slot_taken",
-            "message": f"Slot taken by @{clash['user']} ({clash['core_provider']}/{clash['ran_provider']})",
+            "message": f"Slot taken by @{clash['user']} ({time.strftime('%H:%M', time.localtime(clash['start_at']))} - {time.strftime('%H:%M', time.localtime(clash['end_at']))})",
             "conflict": clash,
         }
 
@@ -63,8 +62,8 @@ def book(user: str, core_provider: str, ran_provider: str, start_at: float, end_
         row = BookingModel(
             id=bid,
             user=user.strip(),
-            core_provider=core_provider.strip(),
-            ran_provider=ran_provider.strip(),
+            core_provider="",  # session-only: provider chosen later at connect time
+            ran_provider="",
             start_at=float(start_at),
             end_at=float(end_at),
             status="pending",
@@ -107,7 +106,6 @@ def list_my_active(user: str) -> dict | None:
 def get_my_active_reservation(user: str) -> dict | None:
     return list_my_active(user)
 
-
 def approve(booking_id: str) -> dict:
     now = time.time()
     with get_db_session() as db:
@@ -118,8 +116,6 @@ def approve(booking_id: str) -> dict:
             return {"ok": False, "reason": "invalid_status", "message": f"cannot approve booking with status {row.status}"}
         # re-check overlap against other active/pending bookings (excluding self)
         clash = None
-        # need to query inside same session to avoid race but we reuse helper that opens new session
-        # do overlap check in current session:
         q = db.query(BookingModel).filter(
             BookingModel.id != booking_id,
             BookingModel.status.in_(["pending", "active"]),
@@ -133,7 +129,6 @@ def approve(booking_id: str) -> dict:
         data = row.to_dict(now)
     return {"ok": True, "booking": data}
 
-
 def reject(booking_id: str) -> dict:
     with get_db_session() as db:
         row = db.query(BookingModel).filter(BookingModel.id == booking_id).first()
@@ -144,7 +139,6 @@ def reject(booking_id: str) -> dict:
         row.status = "cancelled"
         data = row.to_dict(time.time())
     return {"ok": True, "booking": data}
-
 
 def cancel(booking_id: str, requesting_user: str, is_admin: bool = False) -> dict:
     with get_db_session() as db:
@@ -158,7 +152,6 @@ def cancel(booking_id: str, requesting_user: str, is_admin: bool = False) -> dic
         row.status = "cancelled"
         data = row.to_dict(time.time())
     return {"ok": True, "booking": data}
-
 
 def auto_mark_done() -> int:
     """Opportunistic: mark expired active bookings as done. Returns count changed."""

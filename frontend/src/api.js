@@ -128,11 +128,19 @@ export async function fetchAllReservations() {
 }
 
 // ---- Booking reservation (Core↔RAN exclusive) ----
-export async function bookReservation(coreProvider, ranProvider, startAt, endAt) {
+// SESSION-ONLY: time slot only, provider chosen at connect time
+export async function bookReservation(startAt, endAt, _legacyCore, _legacyRan) {
+  // backwards compat: old signature bookReservation(coreProv, ranProv, startTs, endTs)
+  let s = startAt, e = endAt;
+  if (_legacyRan !== undefined) {
+    // 4-arg legacy call
+    s = _legacyCore; e = _legacyRan;
+  }
+  const body = { start_at: s, end_at: e };
   const res = await fetch(`${BASE}/reservations/book`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ core_provider: coreProvider, ran_provider: ranProvider, start_at: startAt, end_at: endAt }),
+    body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {

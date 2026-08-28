@@ -988,10 +988,11 @@ from datetime import datetime
 
 
 class BookRequest(BaseModel):
-    core_provider: str
-    ran_provider: str
     start_at: float | str
     end_at: float | str
+    # legacy: accepted but ignored (session-only mode, provider chosen at connect time)
+    core_provider: str | None = None
+    ran_provider: str | None = None
 
 
 def _parse_ts(v: float | str) -> float:
@@ -1025,12 +1026,12 @@ def book_reservation(body: BookRequest, current_user: str = Depends(require_user
         end_ts = _parse_ts(body.end_at)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    result = booking_svc.book(current_user, body.core_provider, body.ran_provider, start_ts, end_ts)
+    result = booking_svc.book(current_user, start_ts, end_ts)
     if not result["ok"]:
         if result.get("reason") == "slot_taken":
             raise HTTPException(409, detail=result)
         raise HTTPException(400, detail=result)
-    log_audit(current_user, "BOOK_RESERVATION", detail=f"{body.core_provider}/{body.ran_provider} {start_ts}->{end_ts}")
+    log_audit(current_user, "BOOK_RESERVATION", detail=f"{start_ts}->{end_ts}")
     return result["booking"]
 
 

@@ -178,8 +178,8 @@ class BookingModel(Base):
 
     id = Column(String(64), primary_key=True, index=True)
     user = Column(String(64), nullable=False, index=True)
-    core_provider = Column(String(64), nullable=False)
-    ran_provider = Column(String(64), nullable=False)
+    core_provider = Column(String(64), nullable=True, default="")
+    ran_provider = Column(String(64), nullable=True, default="")
     start_at = Column(Float, nullable=False, index=True)
     end_at = Column(Float, nullable=False, index=True)
     status = Column(String(32), default="pending", nullable=False, index=True)  # pending/active/done/cancelled/rejected
@@ -197,8 +197,8 @@ class BookingModel(Base):
         return {
             "id": self.id,
             "user": self.user,
-            "core_provider": self.core_provider,
-            "ran_provider": self.ran_provider,
+            "core_provider": self.core_provider or "",
+            "ran_provider": self.ran_provider or "",
             "start_at": self.start_at,
             "end_at": self.end_at,
             "status": self.status,
