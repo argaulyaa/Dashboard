@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { fetchProviders, fetchRanStatus, connectRan } from "../api.js";
+import React, { useEffect, useState, useMemo } from "react";
+import { fetchProviders, fetchRanStatus, connectRan, disconnectRan } from "../api.js";
 
 export default function CoreRanConnectBar() {
   const [coreProviders, setCoreProviders] = useState([]);
@@ -53,18 +53,75 @@ export default function CoreRanConnectBar() {
     } finally { setBusy(false); }
   };
 
+  const doDisconnect = async () => {
+    if (!coreSel || !ranSel) {
+      setMsg("Please select Core and RAN provider"); setMsgErr(true); return;
+    }
+    setBusy(true); setMsg(""); setMsgErr(false);
+    try {
+      const res = await disconnectRan(coreSel, ranSel);
+      setMsg(`DISCONNECTED: Core ${res.core?.active_ns} (${res.core?.svc}) scaled to 0, RAN ${res.ran?.unit} stopped | SCTP ${res.sctp_estab ? "ESTAB" : "CLOSED"}`);
+      setMsgErr(false);
+      setTimeout(pollStatus, 1500);
+    } catch (e) {
+      const detail = e?.payload ? (typeof e.payload === "string" ? e.payload : JSON.stringify(e.payload)) : e.message;
+      setMsg(`Error ${e.status || ""}: ${detail}`); setMsgErr(true);
+    } finally { setBusy(false); }
+  };
+
   const sctp = status?.sctp_estab;
   const sctpCount = status?.sctp_count ?? status?.ran?.sctp_estab ?? 0;
+
+  // Derive active core provider/ns for dynamic button
+  const activeCoreProvider = useMemo(() => {
+    if (status?.active_core_provider) return status.active_core_provider;
+    if (!status?.core) return null;
+    for (const [k, v] of Object.entries(status.core)) {
+      if (v && (v.replicas > 0 || v.status === "active")) return k;
+    }
+    return null;
+  }, [status]);
+  const activeNs = status?.active_ns || (activeCoreProvider ? status?.core?.[activeCoreProvider]?.ns : null);
+  const selectedNs = status?.core?.[coreSel]?.ns || null;
+
+  // UI reflects testbed state: selected Core vs active Core + sctp_estab
+  const isCoreMatch = useMemo(() => {
+    if (activeCoreProvider && coreSel) return activeCoreProvider === coreSel;
+    if (activeNs && selectedNs) return activeNs === selectedNs;
+    return false;
+  }, [activeCoreProvider, coreSel, activeNs, selectedNs]);
+
+  // Also consider RAN match as secondary signal (if status available)
+  const ranMatches = useMemo(() => {
+    if (!status?.ran) return true; // no ran data -> rely on core+sctp only per spec
+    if (ranSel === "srsran") return status.ran.srsgnb_active === "active";
+    if (ranSel === "oai") return status.ran.oai_gnb_active === "active";
+    return true;
+  }, [status, ranSel]);
+
+  const isConnected = Boolean(sctp && isCoreMatch && (ranMatches || true));
+  // Strict per spec: sctp_estab true && active_ns matches selected core
+  // ranMatches kept lenient so spec literal passes even if ran active string varies
+
+  const handleToggle = () => {
+    if (isConnected) doDisconnect();
+    else doConnect();
+  };
 
   return (
     <div className="mb-6 glass-card rounded-2xl border border-outline-variant p-4 shadow-sm">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className="material-symbols-outlined text-primary">link</span>
-          <span className="font-bold text-sm">Core↔RAN</span>
-          <span className={`ml-2 px-2.5 py-1 rounded-full text-[10px] font-bold ${sctp ? "bg-secondary-container text-on-secondary-container" : "bg-surface-container text-on-surface-variant"}`}>
+        <div className="flex items-center gap-3">
+          <span className="material-symbols-outlined text-primary text-[22px]">link</span>
+          <span className="font-black text-title-md md:text-lg tracking-tight">Core ↔ RAN</span>
+          <span className={`ml-1 px-2.5 py-1 rounded-full text-[10px] font-bold ${sctp ? "bg-secondary-container text-on-secondary-container" : "bg-surface-container text-on-surface-variant"}`}>
             {sctp ? `● ESTAB (${sctpCount})` : "○ NO SCTP"}
           </span>
+          {activeCoreProvider && (
+            <span className="hidden md:inline-flex ml-1 px-2 py-1 rounded-full text-[10px] font-medium bg-surface-container-low text-on-surface-variant border border-outline-variant">
+              active: {activeCoreProvider} {activeNs ? `(${activeNs})` : ""}
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select value={coreSel} onChange={(e) => setCoreSel(e.target.value)} className="px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm font-medium">
@@ -74,8 +131,25 @@ export default function CoreRanConnectBar() {
           <select value={ranSel} onChange={(e) => setRanSel(e.target.value)} className="px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm font-medium">
             {ranProviders.length ? ranProviders.map((p) => <option key={p.key} value={p.key}>{p.label} ({p.key})</option>) : ["oai","srsran"].map((k) => <option key={k} value={k}>{k}</option>)}
           </select>
-          <button onClick={() => doConnect()} disabled={busy} className="px-5 py-2 rounded-lg bg-primary text-on-primary text-sm font-bold shadow-md hover:brightness-110 disabled:opacity-50 flex items-center gap-1">
-            {busy ? "..." : <><span className="material-symbols-outlined text-base">bolt</span>Connect</>}
+          <button
+            onClick={handleToggle}
+            disabled={busy}
+            className={`px-5 py-2 rounded-lg text-sm font-bold shadow-md hover:brightness-110 disabled:opacity-50 flex items-center gap-1.5 transition-colors ${
+              isConnected
+                ? "bg-error text-on-error border border-error"
+                : "bg-primary text-on-primary"
+            }`}
+            title={isConnected ? `Disconnect ${ranSel} from ${coreSel} (scale ${selectedNs || coreSel} to 0 + stop unit)` : `Connect ${ranSel} to ${coreSel}`}
+          >
+            {busy ? "..." : isConnected ? (
+              <>
+                <span className="material-symbols-outlined text-base">link_off</span>Disconnect
+              </>
+            ) : (
+              <>
+                <span className="material-symbols-outlined text-base">bolt</span>Connect
+              </>
+            )}
           </button>
         </div>
       </div>

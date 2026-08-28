@@ -350,3 +350,21 @@ export async function connectRan(coreProvider, ranProvider, dryRun = false) {
   }
   return data;
 }
+
+export async function disconnectRan(coreProvider, ranProvider) {
+  const res = await fetch(`${BASE}/ran/disconnect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ core_provider: coreProvider, ran_provider: ranProvider }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || data);
+    const err = new Error(msg || "disconnect_failed");
+    err.payload = data?.detail;
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}

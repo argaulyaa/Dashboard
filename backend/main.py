@@ -1052,11 +1052,24 @@ def ran_status(current_user: str = Depends(require_user)):
     except Exception as e:
         raise HTTPException(500, f"ran_status_failed: {e}")
     estab = ran.get("sctp_estab", 0) > 0
+    # Derive active core provider/ns for UI (selected vs active check)
+    active_core_provider = None
+    active_ns = None
+    try:
+        for k, v in core.items():
+            if isinstance(v, dict) and (v.get("replicas", 0) > 0 or v.get("status") == "active"):
+                active_core_provider = k
+                active_ns = v.get("ns") or CORE_RAN_MAP.get(k, {}).get("ns")
+                break
+    except Exception:
+        pass
     return {
         "core": core,
         "ran": ran,
         "sctp_estab": estab,
         "sctp_count": ran.get("sctp_estab", 0),
+        "active_core_provider": active_core_provider,
+        "active_ns": active_ns,
     }
 
 @app.post("/api/ran/connect")
@@ -1243,6 +1256,94 @@ def ran_connect(body: RanConnectRequest, request: Request, current_user: str = D
                 _RAN_CONNECT_LOCK.release()
             except:
                 pass
+
+@app.post("/api/ran/disconnect")
+def ran_disconnect(body: RanConnectRequest, request: Request, current_user: str = Depends(require_operator)):
+    """Hybrid Core<->RAN disconnect: scale target Core to 0 + stop RAN unit."""
+    core_provider = (body.core_provider or "").strip()
+    ran_provider = (body.ran_provider or "").strip()
+    if not core_provider or not ran_provider:
+        raise HTTPException(400, "core_provider and ran_provider required")
+    if core_provider not in CORE_RAN_MAP:
+        raise HTTPException(400, f"Unknown core_provider '{core_provider}'. Valid: {list(CORE_RAN_MAP.keys())}")
+    if ran_provider not in RAN_MAP:
+        raise HTTPException(400, f"Unknown ran_provider '{ran_provider}'. Valid: {list(RAN_MAP.keys())}")
+    if not _RAN_CONNECT_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "another_connect_in_progress")
+    try:
+        core_info = CORE_RAN_MAP[core_provider]
+        ran_info = RAN_MAP[ran_provider]
+        master_host = os.environ.get("OAI_K8S_SSH_HOST", "10.91.2.156")
+        master_user = os.environ.get("OAI_K8S_SSH_USER", "telmat")
+        master_pw = os.environ.get("OAI_K8S_SSH_PASSWORD", os.environ.get("K8S_SUDO_PASSWORD","123"))
+        master_port = int(os.environ.get("OAI_K8S_SSH_PORT", "22"))
+        sudo_pw = os.environ.get("K8S_SUDO_PASSWORD", master_pw)
+        kube = os.environ.get("OAI_K8S_ADMIN_CONF", "/etc/kubernetes/admin.conf")
+        scale_results = {}
+        ns = core_info.get("ns")
+        if ns:
+            for dep in core_info.get("deployments", []):
+                try:
+                    cmd = f"kubectl --kubeconfig={kube} -n {ns} scale deploy {dep} --replicas=0 2>&1"
+                    out, err, code = _ssh_exec(master_host, master_user, master_pw, master_port, cmd, sudo_pw=sudo_pw)
+                    scale_results[f"{ns}/{dep}"] = {"desired": 0, "out": (out+err)[:300], "code": code}
+                except Exception as e:
+                    scale_results[f"{ns}/{dep}"] = {"desired": 0, "error": str(e)[:300]}
+            time.sleep(1)
+        ran_host = os.environ.get("OAI_SSH_RAN_HOST", "10.91.2.152")
+        ran_user = os.environ.get("OAI_SSH_RAN_USER", "ran")
+        ran_pw = os.environ.get("OAI_SSH_RAN_PASSWORD", "telmat123")
+        ran_port = int(os.environ.get("OAI_SSH_RAN_PORT", "22"))
+        ran_actions = {}
+        unit = ran_info.get("unit")
+        try:
+            full = f"echo {_shlex.quote(ran_pw)} | sudo -S -p '' systemctl stop {unit} 2>&1; echo __CODE__$?"
+            out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, full, timeout=30)
+            ran_actions[f"stop_{unit}"] = (out+err)[:600]
+        except Exception as e:
+            ran_actions[f"stop_{unit}"] = str(e)[:600]
+        try:
+            out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, "pkill -9 -x gnb 2>&1; pkill -9 nr-softmodem 2>&1; sleep 1; echo done", timeout=15)
+            ran_actions["pkill"] = (out+err)[:400]
+        except Exception as e:
+            ran_actions["pkill"] = str(e)[:400]
+        try:
+            out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, "sudo ss -Sn 2>/dev/null | grep -E ':38412|:32112|:30615|:30412' | head -20", timeout=10)
+            sctp_lines = [l.strip() for l in out.splitlines() if l.strip()]
+            sctp_estab = "ESTAB" in out
+        except:
+            sctp_lines = []
+            sctp_estab = False
+        active_ns = core_info.get("ns")
+        svc = core_info.get("svc")
+        cluster_ip = core_info.get("cluster_ip")
+        nodeport = core_info.get("nodeport")
+        try:
+            log_audit(current_user, "RAN_DISCONNECT", domain="ran", detail=f"core={core_provider} ran={ran_provider} unit={unit}")
+        except:
+            pass
+        return {
+            "status": "disconnected",
+            "core": {
+                "active_ns": active_ns,
+                "svc": svc,
+                "cluster_ip": cluster_ip,
+                "nodeport": nodeport,
+                "scale_results": scale_results,
+            },
+            "ran": {
+                "unit": unit,
+                "sctp_estab": sctp_estab,
+                "sctp_lines": sctp_lines,
+                "actions": ran_actions,
+            },
+            "sctp_estab": sctp_estab,
+        }
+    finally:
+        try:
+            _RAN_CONNECT_LOCK.release()
+        except:
+            pass
 
 @app.websocket("/ws/ssh/{domain}/{comp_id}")
 async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
