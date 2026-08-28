@@ -8,9 +8,6 @@ import {
   approveBooking,
   rejectBooking,
   cancelBooking,
-  connectRan,
-  disconnectRan,
-  fetchProviders,
 } from "../api.js";
 
 function formatTime(ts) {
@@ -41,27 +38,9 @@ function statusBadge(s) {
   return map[s] || "bg-gray-100 text-gray-600";
 }
 
-export default function ReservationPage({ data, currentUser }) {
+export default function ReservationPage({ currentUser }) {
   const role = getRole();
   const isAdmin = currentUser === "admin" || role === "admin";
-
-  // providers for connect (chosen at connect time, not booking)
-  const [coreProviders, setCoreProviders] = useState([]);
-  const [ranProviders, setRanProviders] = useState([]);
-  useEffect(() => {
-    fetchProviders("core").then(setCoreProviders).catch(() => setCoreProviders([{ key: "oai", label: "OAI" }]));
-    fetchProviders("ran").then(setRanProviders).catch(() => setRanProviders([{ key: "oai", label: "OAI" }]));
-  }, []);
-
-  // provider choice for connect (not for booking)
-  const [coreProv, setCoreProv] = useState("");
-  const [ranProv, setRanProv] = useState("");
-  useEffect(() => {
-    if (coreProviders.length && !coreProv) setCoreProv(coreProviders[0].key);
-  }, [coreProviders]);
-  useEffect(() => {
-    if (ranProviders.length && !ranProv) setRanProv(ranProviders[0].key);
-  }, [ranProviders]);
 
   // time-only booking form
   const [startAt, setStartAt] = useState("");
@@ -73,7 +52,6 @@ export default function ReservationPage({ data, currentUser }) {
   const [err, setErr] = useState("");
   const [okMsg, setOkMsg] = useState("");
   const [loading, setLoading] = useState(false);
-  const [connectBusy, setConnectBusy] = useState(false);
 
   const load = async () => {
     try {
@@ -91,7 +69,7 @@ export default function ReservationPage({ data, currentUser }) {
         const all = await fetchAllBookings();
         setAllBookings(all);
       }
-    } catch (e) {
+    } catch {
       // ignore
     }
   };
@@ -114,7 +92,8 @@ export default function ReservationPage({ data, currentUser }) {
 
   const handleBook = async (e) => {
     e.preventDefault();
-    setErr(""); setOkMsg("");
+    setErr("");
+    setOkMsg("");
     if (!startAt || !endAt) { setErr("Fill start and end time"); return; }
     const startTs = new Date(startAt).getTime() / 1000;
     const endTs = new Date(endAt).getTime() / 1000;
@@ -142,77 +121,36 @@ export default function ReservationPage({ data, currentUser }) {
   const handleReject = async (id) => {
     try { await rejectBooking(id); await load(); } catch (ex) { alert(ex.payload?.message || ex.message); }
   };
-  const handleConnect = async (disco = false) => {
-    if (!activeBooking && !isAdmin) { alert("No active reservation"); return; }
-    if (!coreProv || !ranProv) { alert("Select core & ran provider for connect"); return; }
-    setConnectBusy(true);
-    try {
-      const res = disco ? await disconnectRan(coreProv, ranProv) : await connectRan(coreProv, ranProv, false);
-      alert(`${disco ? "Disconnect" : "Connect"}: ${res.status || "ok"} ${res.sctp_estab ? "(SCTP ESTAB)" : ""}`);
-    } catch (ex) {
-      const m = ex.payload?.message || ex.payload?.reason || ex.message;
-      alert(`Failed: ${typeof m === "string" ? m : JSON.stringify(m)}`);
-    } finally { setConnectBusy(false); }
-  };
 
   return (
     <div className="max-w-[1600px] mx-auto space-y-6">
       <div>
         <h2 className="font-headline-md text-headline-md text-on-surface">Reservation Booking</h2>
-        <p className="text-on-surface-variant opacity-70">Book exclusive session (time only) — provider choice happens at connect time. Single B210 testbed: any overlap globally blocks.</p>
+        <p className="text-on-surface-variant opacity-70">Book exclusive session (time only) — Core/RAN provider choice is on the Core page. Single B210 testbed: any overlap globally blocks.</p>
       </div>
 
-      {/* Active countdown */}
+      {/* Active Session — time & status only, no provider pick */}
       {activeBooking ? (
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm font-bold text-emerald-800">Active Session</p>
             <p className="text-sm text-emerald-700">{formatTime(activeBooking.start_at)} → {formatTime(activeBooking.end_at)}</p>
             <p className="text-xs text-emerald-600">Status: {activeBooking.status} • remaining {formatCountdown(Math.floor(activeRemaining))}</p>
+            <p className="mt-1 text-xs text-emerald-700">Provider choice: go to <a href="#/core" className="underline font-bold">Core → Core↔RAN bar</a> to connect.</p>
           </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <div>
-              <label className="text-xs font-bold uppercase tracking-wider text-emerald-700">Core</label>
-              <select value={coreProv} onChange={(e) => setCoreProv(e.target.value)} className="w-full mt-1 px-3 py-2 border border-emerald-200 rounded-lg bg-white text-sm">
-                {coreProviders.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-bold uppercase tracking-wider text-emerald-700">RAN</label>
-              <select value={ranProv} onChange={(e) => setRanProv(e.target.value)} className="w-full mt-1 px-3 py-2 border border-emerald-200 rounded-lg bg-white text-sm">
-                {ranProviders.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-              </select>
-            </div>
-            <button onClick={() => handleConnect(false)} disabled={connectBusy || (!isAdmin && !activeBooking?.is_active)} className="px-5 py-2 bg-emerald-600 text-white rounded-lg font-bold disabled:opacity-40 hover:bg-emerald-700">
-              {connectBusy ? "..." : "Connect now"}
-            </button>
-            <button onClick={() => handleConnect(true)} disabled={connectBusy} className="px-4 py-2 border border-emerald-600 text-emerald-700 rounded-lg font-bold disabled:opacity-40">Disconnect</button>
+          <div className="text-right">
+            <p className="text-2xl font-mono font-bold text-emerald-800">{formatCountdown(Math.floor(activeRemaining))}</p>
+            <p className="text-xs text-emerald-600">time remaining</p>
           </div>
         </div>
       ) : (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
-          <p className="text-sm text-amber-800">No active reservation — book a slot and wait for admin approval. {isAdmin && "Admin can connect without booking."}</p>
-          <div className="flex flex-wrap items-end gap-2">
-            <div>
-              <label className="text-xs font-bold uppercase tracking-wider text-amber-700">Core</label>
-              <select value={coreProv} onChange={(e) => setCoreProv(e.target.value)} className="w-full mt-1 px-3 py-2 border border-amber-200 rounded-lg bg-white text-sm">
-                {coreProviders.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-bold uppercase tracking-wider text-amber-700">RAN</label>
-              <select value={ranProv} onChange={(e) => setRanProv(e.target.value)} className="w-full mt-1 px-3 py-2 border border-amber-200 rounded-lg bg-white text-sm">
-                {ranProviders.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-              </select>
-            </div>
-            <button onClick={() => handleConnect(false)} disabled={!isAdmin || connectBusy} className={`px-4 py-2 rounded-lg font-bold ${isAdmin ? "bg-primary text-white" : "bg-gray-200 text-gray-400 cursor-not-allowed"}`} title={isAdmin ? "Admin bypass" : "Only active session can connect"}>
-              Connect {isAdmin ? "(admin bypass)" : "(need active)"}
-            </button>
-          </div>
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <p className="text-sm text-amber-800">No active reservation — book a slot and wait for admin approval. {isAdmin && "Admin can connect via Core page without booking."}</p>
+          <p className="text-xs text-amber-700 mt-1">Provider (Core/RAN) is chosen on the <a href="#/core" className="underline font-bold">Core page</a> after your session is active.</p>
         </div>
       )}
 
-      {/* Book Session form — SESSION-ONLY: time only, no provider dropdowns */}
+      {/* Book Session form — time only, no provider dropdowns */}
       <div className="bg-white rounded-xl border border-outline-variant shadow-sm p-6">
         <h3 className="font-title-md text-title-md mb-4">Book Session</h3>
         <form onSubmit={handleBook} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
@@ -230,7 +168,7 @@ export default function ReservationPage({ data, currentUser }) {
         </form>
         {err && <p className="mt-3 text-sm text-red-600 font-mono">{err}</p>}
         {okMsg && <p className="mt-3 text-sm text-emerald-600">{okMsg}</p>}
-        <p className="mt-2 text-xs text-on-surface-variant">Session-only: booking reserves time on the single B210 testbed. Overlap with any pending/active booking → 409 Slot taken. Provider (core/ran) chosen later at Connect.</p>
+        <p className="mt-2 text-xs text-on-surface-variant">Session-only: booking reserves time on the single B210 testbed. Overlap with any pending/active booking → 409 Slot taken. Provider (Core/RAN) chosen on Core page at connect time.</p>
       </div>
 
       {/* My Bookings — time only */}
