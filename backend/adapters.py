@@ -1380,10 +1380,16 @@ class SshRanAdapter:
 
         n2_desc = n2_ip if n2_ip else f"{n2_count} koneksi"
         e2_desc = f"{e2_count} sesi E2" if e2_count else "tidak ada"
-        uptime = self._parse_etime(proc["etime"])
+        # Uptime: prefer systemctl (jika ada service), fallback ke ps etime — fallback 0 jika gagal
+        uptime = self._get_systemd_uptime() or self._parse_etime(proc["etime"])
         mem_gb = proc["rss_kb"] / (1024 * 1024)
         mem_total = 15.9  # total RAM node RAN (GB) — dipakai buat mem_pct kasaran
         mem_pct = round(min(100.0, mem_gb / mem_total * 100), 2)
+        # Host via bind_addr dari config (GNB_IPV4_ADDRESS_FOR_NG_AMF), fallback ke SSH host jujur
+        host_ip = self._cfg.get("bind_addr") or self._ssh["host"]
+        # Latency via ping ke AMF / core — fallback 0 jujur jika tidak reachable
+        ping_target = self._cfg.get("amf_ip") or "10.91.2.151"
+        latency_ms = self._get_latency_ms(ping_target)
 
         detail = (
             f"{self._cfg.get('type', gtype)} | n{self._cfg.get('band', '?')} "
@@ -1396,13 +1402,13 @@ class SshRanAdapter:
             "kind": self._cfg.get("type", "gNB"),
             "status": "healthy",
             "detail": detail,
-            "host": self._ssh["host"],
+            "host": host_ip,
             "cpu_pct": round(proc["pcpu"], 2),
             "mem_gb": round(mem_gb, 2),
             "mem_pct": mem_pct,
             "throughput_mbps": 0.0,
             "port": 38412,
-            "latency_ms": 0.0,
+            "latency_ms": latency_ms,
             "active_ues": ue_count if ue_count else 0,
             "last_updated": time.time(),
             "uptime_seconds": uptime,
@@ -1424,7 +1430,98 @@ class SshRanAdapter:
 
     def _fetch_config(self, gtype, args) -> dict:
         import re
-        cfg = {"type": "", "band": "", "bw": "", "arfcn": "", "plmn": ""}
+        cfg = {"type": "", "band": "", "bw": "", "arfcn": "", "plmn": "", "bind_addr": "", "amf_ip": ""}
+        if gtype == "nr-softmodem":
+            cfg["type"] = "OAI nr-softmodem"
+            m = re.search(r"-O\s+(\S+)", args)
+            path = m.group(1) if m else None
+            if path and "/" not in path:
+                path = f"/home/ran/{path}"
+            if path:
+                try:
+                    o, _ = self._exec(f"grep -iE 'dl_frequencyBand|dl_carrierBandwidth|bands[[:space:]]*=' {path} | head -5")
+                    for ln in o.splitlines():
+                        kv = re.search(r'([A-Za-z_]+)\s*=\s*([^;]+)', ln)
+                        if kv:
+                            k, v = kv.group(1).lower(), kv.group(2).strip()
+                            if "band" in k and not cfg["band"]:
+                                cfg["band"] = v
+                            elif "carrierbandwidth" in k and not cfg["bw"]:
+                                cfg["bw"] = v
+                    # Host/IP via bind_addr (GNB_IPV4_ADDRESS_FOR_NG_AMF) — real testbed IP
+                    o2, _ = self._exec(f"grep -iE 'GNB_IPV4_ADDRESS_FOR_NG_AMF|GNB_IPV4_ADDRESS_FOR_NGU|amf_ip_address' {path} | head -5")
+                    for ln2 in o2.splitlines():
+                        ip_m = re.search(r'(\d+\.\d+\.\d+\.\d+)', ln2)
+                        if ip_m:
+                            ip = ip_m.group(1)
+                            if "amf_ip_address" in ln2.lower() and not cfg["amf_ip"]:
+                                cfg["amf_ip"] = ip
+                            elif not cfg["bind_addr"]:
+                                cfg["bind_addr"] = ip
+                    cfg["conf"] = path
+                except Exception:
+                    pass
+        else:
+            cfg["type"] = "srsRAN gNB"
+            m = re.search(r"-c\s+(\S+)", args)
+            path = m.group(1) if m else None
+            if path and not path.startswith("/"):
+                path = f"/home/ran/{path}"
+            cfg["conf"] = path or ""
+            if path:
+                try:
+                    o, _ = self._exec(
+                        f"grep -iE 'band:|dl_arfcn:|channel_bandwidth_MHz|plmn:' {path} | head -8")
+                    for ln in o.splitlines():
+                        kv = re.search(r'([A-Za-z_]+)\s*:\s*"?([A-Za-z0-9_.]+)', ln)
+                        if kv:
+                            k = kv.group(1).lower()
+                            v = kv.group(2)
+                            if k == "band":
+                                cfg["band"] = v
+                            elif k == "dl_arfcn":
+                                cfg["arfcn"] = v
+                            elif "bandwidth" in k:
+                                cfg["bw"] = v
+                            elif k == "plmn":
+                                cfg["plmn"] = v
+                except Exception:
+                    pass
+        return cfg
+
+    def _get_latency_ms(self, target: str) -> float:
+        """Ping target via SSH — honest 0.0 jika gagal/tidak reachable."""
+        if not target:
+            return 0.0
+        try:
+            out, _ = self._exec(f"ping -c 1 -W 1 {target} 2>/dev/null | grep -oE 'time=[0-9.]+' | head -1")
+            import re
+            m = re.search(r'time=([0-9.]+)', out)
+            if m:
+                return round(float(m.group(1)), 2)
+        except Exception:
+            pass
+        return 0.0
+
+    def _get_systemd_uptime(self) -> int:
+        """Uptime via systemctl jika ada service gNB, else 0 biar fallback ke ps etime."""
+        try:
+            for svc in ["gnb", "nr-softmodem", "oai-gnb", "srsran-gnb"]:
+                out, _ = self._exec(f"systemctl show {svc} --property=ActiveEnterTimestamp 2>/dev/null | head -1")
+                if "ActiveEnterTimestamp=" in out and "n/a" not in out.lower():
+                    import re
+                    from datetime import datetime, timezone
+                    ts_str = out.split("=", 1)[1].strip()
+                    try:
+                        dt = datetime.strptime(ts_str, "%a %Y-%m-%d %H:%M:%S %Z")
+                        dt = dt.replace(tzinfo=timezone.utc)
+                        import time as _time
+                        return int(_time.time() - dt.timestamp())
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return 0
         if gtype == "nr-softmodem":
             cfg["type"] = "OAI nr-softmodem"
             m = re.search(r"-O\s+(\S+)", args)
@@ -1598,10 +1695,13 @@ class SrsRanSshAdapter(SshRanAdapter):
 
         n2_desc = n2_ip if n2_ip else f"{n2_count} koneksi"
         e2_desc = f"{e2_count} sesi E2" if e2_count else "tidak ada"
-        uptime = self._parse_etime(proc["etime"])
+        uptime = self._get_systemd_uptime() or self._parse_etime(proc["etime"])
         mem_gb = proc["rss_kb"] / (1024 * 1024)
         mem_total = 15.9
         mem_pct = round(min(100.0, mem_gb / mem_total * 100), 2)
+        host_ip = self._cfg.get("bind_addr") or self._ssh["host"]
+        ping_target = self._cfg.get("amf_ip") or "10.91.2.151"
+        latency_ms = self._get_latency_ms(ping_target)
 
         detail = (
             f"srsRAN gNB | n{self._cfg.get('band', '?')} "
@@ -1614,13 +1714,13 @@ class SrsRanSshAdapter(SshRanAdapter):
             "kind": "srsRAN gNB",
             "status": "healthy",
             "detail": detail,
-            "host": self._ssh["host"],
+            "host": host_ip,
             "cpu_pct": round(proc["pcpu"], 2),
             "mem_gb": round(mem_gb, 2),
             "mem_pct": mem_pct,
             "throughput_mbps": 0.0,
             "port": 38412,
-            "latency_ms": 0.0,
+            "latency_ms": latency_ms,
             "active_ues": ue_count if ue_count else 0,
             "last_updated": time.time(),
             "uptime_seconds": uptime,

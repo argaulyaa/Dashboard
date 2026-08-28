@@ -37,8 +37,8 @@ function formatUptime(seconds) {
   return `${d}d ${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m`;
 }
 
-// Ilustrasi "Coverage Map" -- pengganti foto AI-generated di mockup (yang di-hotlink
-// dari URL luar). Ini SVG statis, murni dekoratif, tidak terikat data asli.
+// Ilustrasi "Coverage Map" -- ILLUSTRATIVE ONLY, not from testbed.
+// Hidden for provider oai (real data only). SVG statis, murni dekoratif, tidak terikat data asli.
 function CoverageMapArt() {
   return (
     <svg className="absolute inset-0 w-full h-full" viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice">
@@ -278,8 +278,8 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
       </div>
 
       <div className="grid grid-cols-12 gap-6">
-          {/* Main Status Card (Featured) */}
-          <div className="col-span-12 lg:col-span-8 bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant overflow-hidden flex flex-col">
+          {/* Main Status Card (Featured) — for oai show full width (only real data), srsran keep 8-col + coverage map */}
+          <div className={`${activeProvider === "oai" ? "col-span-12" : "col-span-12 lg:col-span-8"} bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant overflow-hidden flex flex-col`}>
             <div className="p-6 border-b border-outline-variant flex justify-between items-center">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 bg-secondary-container/30 rounded-xl flex items-center justify-center text-secondary">
@@ -319,60 +319,114 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
               ) : null}
             </div>
 
-            <div className="p-6 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-6">
-              <div className="space-y-6">
-                <div className="h-12 flex flex-col justify-center gap-2">
-                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Implementation</p>
-                  <p className="text-on-surface text-body-md font-bold">{hero?.kind || activeMeta?.label || "gNB"}</p>
-                </div>
-                <div className="h-12 flex flex-col justify-center gap-2">
-                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Architecture</p>
-                  <p className="text-on-surface text-body-md font-bold">CU/DU Split</p>
-                </div>
-                <div className="h-12 flex flex-col justify-center gap-2">
-                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Interface</p>
-                  <p className="text-primary text-body-md font-bold">F1-C / F1-U</p>
-                </div>
-              </div>
-              <div className="space-y-6">
-                <div className="h-12 flex flex-col justify-center gap-2">
-                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Latency</p>
-                  <p className="text-secondary text-body-md font-bold">{hero?.latency_ms ?? "-"}ms</p>
-                </div>
-                <div className="h-12 flex flex-col justify-center gap-2">
-                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Uptime</p>
-                  <p className="text-on-surface text-body-md font-bold">{formatUptime(hero?.uptime_seconds)}</p>
-                </div>
-                <div className="h-12 flex flex-col justify-center gap-2">
-                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Active UEs</p>
-                  <p className="text-on-surface text-body-md font-bold">{hero?.active_ues ?? 0}</p>
-                </div>
-              </div>
-              <div className="space-y-6">
-                <div className="h-12 flex flex-col justify-center gap-2">
-                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">CPU</p>
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-1.5 bg-surface-container rounded-full overflow-hidden">
-                      <div className="h-full bg-primary" style={{ width: `${hero?.cpu_pct ?? 0}%` }} />
-                    </div>
-                    <span className="text-on-surface text-body-md font-bold">{hero?.cpu_pct ?? 0}%</span>
+            {/* Hero metrics: ONLY real testbed data for provider oai — Architecture/Interface (CU/DU, F1-C/U) removed (mock), Throughput removed */}
+            {activeProvider === "oai" ? (
+              <div className="p-6 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-6">
+                <div className="space-y-6">
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Implementation</p>
+                    <p className="text-on-surface text-body-md font-bold">{hero?.kind || activeMeta?.label || "gNB"}</p>
+                  </div>
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Latency</p>
+                    <p className="text-secondary text-body-md font-bold">{hero?.latency_ms ? `${hero.latency_ms}ms` : "0ms (no data)"}</p>
+                  </div>
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Uptime</p>
+                    <p className="text-on-surface text-body-md font-bold">{formatUptime(hero?.uptime_seconds)}</p>
                   </div>
                 </div>
-                <div className="h-12 flex flex-col justify-center gap-2">
-                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Memory</p>
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-1.5 bg-surface-container rounded-full overflow-hidden">
-                      <div className="h-full bg-tertiary" style={{ width: `${hero?.mem_pct ?? 0}%` }} />
+                <div className="space-y-6">
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Active UEs</p>
+                    <p className="text-on-surface text-body-md font-bold">{hero?.active_ues ?? 0}</p>
+                  </div>
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">CPU</p>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-1.5 bg-surface-container rounded-full overflow-hidden">
+                        <div className="h-full bg-primary" style={{ width: `${hero?.cpu_pct ?? 0}%` }} />
+                      </div>
+                      <span className="text-on-surface text-body-md font-bold">{hero?.cpu_pct ?? 0}%</span>
                     </div>
-                    <span className="text-on-surface text-body-md font-bold">{hero?.mem_gb ?? 0}GB</span>
+                  </div>
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Memory</p>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-1.5 bg-surface-container rounded-full overflow-hidden">
+                        <div className="h-full bg-tertiary" style={{ width: `${hero?.mem_pct ?? 0}%` }} />
+                      </div>
+                      <span className="text-on-surface text-body-md font-bold">{hero?.mem_gb ?? 0}GB</span>
+                    </div>
                   </div>
                 </div>
-                <div className="h-12 flex flex-col justify-center gap-2">
-                  <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Status detail</p>
-                  <p className="text-on-surface text-body-md font-bold">{hero?.detail || "-"}</p>
+                <div className="space-y-6">
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Status detail</p>
+                    <p className="text-on-surface text-body-md font-bold">{hero?.detail || "-"}</p>
+                  </div>
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Host/IP</p>
+                    <p className="text-on-surface text-body-md font-bold font-mono text-sm">{hero?.host || "-"}</p>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="p-6 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-6">
+                <div className="space-y-6">
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Implementation</p>
+                    <p className="text-on-surface text-body-md font-bold">{hero?.kind || activeMeta?.label || "gNB"}</p>
+                  </div>
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Architecture</p>
+                    <p className="text-on-surface text-body-md font-bold">CU/DU Split <span className="text-[10px] font-normal text-outline">(illustrative)</span></p>
+                  </div>
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Interface</p>
+                    <p className="text-primary text-body-md font-bold">F1-C / F1-U <span className="text-[10px] font-normal text-outline">(illustrative)</span></p>
+                  </div>
+                </div>
+                <div className="space-y-6">
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Latency</p>
+                    <p className="text-secondary text-body-md font-bold">{hero?.latency_ms ?? "-"}ms</p>
+                  </div>
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Uptime</p>
+                    <p className="text-on-surface text-body-md font-bold">{formatUptime(hero?.uptime_seconds)}</p>
+                  </div>
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Active UEs</p>
+                    <p className="text-on-surface text-body-md font-bold">{hero?.active_ues ?? 0}</p>
+                  </div>
+                </div>
+                <div className="space-y-6">
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">CPU</p>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-1.5 bg-surface-container rounded-full overflow-hidden">
+                        <div className="h-full bg-primary" style={{ width: `${hero?.cpu_pct ?? 0}%` }} />
+                      </div>
+                      <span className="text-on-surface text-body-md font-bold">{hero?.cpu_pct ?? 0}%</span>
+                    </div>
+                  </div>
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Memory</p>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-1.5 bg-surface-container rounded-full overflow-hidden">
+                        <div className="h-full bg-tertiary" style={{ width: `${hero?.mem_pct ?? 0}%` }} />
+                      </div>
+                      <span className="text-on-surface text-body-md font-bold">{hero?.mem_gb ?? 0}GB</span>
+                    </div>
+                  </div>
+                  <div className="h-12 flex flex-col justify-center gap-2">
+                    <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Status detail</p>
+                    <p className="text-on-surface text-body-md font-bold">{hero?.detail || "-"}</p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="mt-auto p-6 bg-surface-container-low flex justify-between items-center">
               <div className="flex -space-x-2">
@@ -456,29 +510,31 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
             />
           )}
 
-          {/* Coverage Map Card */}
-          <div className="col-span-12 lg:col-span-4 bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant p-6 flex flex-col">
-            <h3 className="text-title-md font-bold mb-4">Coverage Map</h3>
-            <div className="flex-1 rounded-lg bg-surface-container overflow-hidden relative min-h-[240px]">
-              <CoverageMapArt />
-              <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur p-2 rounded-lg text-[10px] font-bold shadow-sm">
-                <p className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-secondary" />
-                  Optimal Coverage
-                </p>
+          {/* Coverage Map Card — ILLUSTRATIVE ONLY, hidden for provider oai (real data only) */}
+          {activeProvider !== "oai" && (
+            <div className="col-span-12 lg:col-span-4 bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant p-6 flex flex-col">
+              <h3 className="text-title-md font-bold mb-4">Coverage Map <span className="text-[10px] font-normal text-outline">(illustrative)</span></h3>
+              <div className="flex-1 rounded-lg bg-surface-container overflow-hidden relative min-h-[240px]">
+                <CoverageMapArt />
+                <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur p-2 rounded-lg text-[10px] font-bold shadow-sm">
+                  <p className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-secondary" />
+                    Optimal Coverage
+                  </p>
+                </div>
+              </div>
+              <div className="mt-6 space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-body-md text-on-surface-variant">FR1 (Sub-6GHz)</span>
+                  <span className="px-2 py-0.5 bg-secondary-container/30 text-secondary text-[10px] font-bold rounded">ENABLED</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-body-md text-on-surface-variant">FR2 (mmWave)</span>
+                  <span className="px-2 py-0.5 bg-surface-container text-outline text-[10px] font-bold rounded">DISABLED</span>
+                </div>
               </div>
             </div>
-            <div className="mt-6 space-y-4">
-              <div className="flex justify-between items-center">
-                <span className="text-body-md text-on-surface-variant">FR1 (Sub-6GHz)</span>
-                <span className="px-2 py-0.5 bg-secondary-container/30 text-secondary text-[10px] font-bold rounded">ENABLED</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-body-md text-on-surface-variant">FR2 (mmWave)</span>
-                <span className="px-2 py-0.5 bg-surface-container text-outline text-[10px] font-bold rounded">DISABLED</span>
-              </div>
-            </div>
-          </div>
+          )}
 
           {/* Node List Table */}
           <div className="col-span-12 bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border border-outline-variant overflow-hidden">
