@@ -2034,12 +2034,18 @@ class KubectlRicAdapter:
     """Adapter RIC via Kubernetes ns ric (Fase hostNetwork).
 
     Membaca state FlexRIC K8s pod di namespace ric via kubectl over SSH ke master
-    10.91.2.156 (/etc/kubernetes/admin.conf, sudo -S). Live metrics via
-    kubectl get pods -o wide + top pods + get svc. Fallback ke down jujur jika
-    tidak ada pod / SSH gagal. Port 36421 SCTP, E2 count dari ss di dalam pod
-    (kubectl exec) kalau memungkinkan, fallback ke pod readiness.
+    (default 10.91.2.156, OAI_K8S_SSH_HOST) melalui /etc/kubernetes/admin.conf (sudo -n).
+    Live metrics via:
+      1. get pods -o wide        -> phase/ready/restarts/podIP/node (host=podIP)
+      2. get pods custom-columns -> status.startTime (sumber uptime)
+      3. top pods                -> CPU/mem real (butuh metrics-server)
+      4. get svc                 -> endpoint svc (jika ada)
+      5. ping                    -> latency_ms ke RAN (10.91.2.152)
 
-    READ-ONLY Fase 1 — restart() hanya simulasi UI.
+    Map: component ric -> prefix flexric-nearrt-ric, label app=flexric-nearrt-ric
+    (fallback app=flexric atau k8s-app=flexric untuk kompatibilitas). Port E2 36421/SCTP,
+    detail: Pod <name> (<phase>, <ready>) • node <node> • podIP <ip> • E2 36421/SCTP hostNetwork • latency Xms.
+    READ-ONLY — restart() hanya simulasi UI, tidak menyentuh cluster.
     """
 
     CACHE_TTL = 2.5
@@ -2084,15 +2090,24 @@ class KubectlRicAdapter:
 
     def get_logs(self, comp_id: str, tail: int = 100) -> str:
         if comp_id not in self._map and comp_id not in ("nonrt-ric", "flexric", "nearrt-ric"):
+            if comp_id.startswith("xapp-"):
+                return f"[RIC] xApp '{comp_id}' not in K8s ns {self._ns} (only nearRT-RIC deployed)"
             return f"Component '{comp_id}' not mapped."
         try:
-            out, err = self._exec(f"{self._kctl()} -n {self._ns} logs --tail={int(tail)} --timestamps -l app=flexric-nearrt-ric")
-            return (out or "").strip() or (err.strip() or "(tidak ada log)")
+            # label fallback: app=flexric-nearrt-ric primary, then app=flexric, then k8s-app=flexric
+            out, err = self._exec(f"{self._kctl()} -n {self._ns} logs --tail={int(tail)} --timestamps -l app=flexric-nearrt-ric 2>&1")
+            if out.strip():
+                return out.strip()
+            out2, err2 = self._exec(f"{self._kctl()} -n {self._ns} logs --tail={int(tail)} --timestamps -l app=flexric 2>&1")
+            if out2.strip():
+                return out2.strip()
+            out3, err3 = self._exec(f"{self._kctl()} -n {self._ns} logs --tail={int(tail)} --timestamps -l k8s-app=flexric 2>&1")
+            return (out3 or "").strip() or (err3.strip() or err2.strip() or err.strip() or "(tidak ada log)")
         except Exception as e:
             return f"[SSH Error] Gagal ambil log RIC via kubectl: {e}"
 
     def _kctl(self) -> str:
-        return f"sudo -S -p '' {self._kubectl} --kubeconfig={self._kubeconfig}"
+        return f"sudo -n {self._kubectl} --kubeconfig={self._kubeconfig}"
 
     def _exec(self, cmd: str):
         import paramiko
@@ -2102,8 +2117,7 @@ class KubectlRicAdapter:
             conn.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             conn.connect(hostname=self._ssh["host"], port=self._ssh["port"], username=self._ssh["user"], password=self._ssh["password"], timeout=8, banner_timeout=10)
             self._conn = conn
-        full = f"echo {_sh_quote(self._ssh['sudo'])} | {cmd}"
-        _, stdout, stderr = conn.exec_command(full, timeout=25)
+        _, stdout, stderr = conn.exec_command(cmd, timeout=25)
         return stdout.read().decode("utf-8", errors="replace"), stderr.read().decode("utf-8", errors="replace")
 
     def _maybe_refresh(self):
@@ -2113,11 +2127,13 @@ class KubectlRicAdapter:
         self._last_fetch = now
         kc = self._kctl()
         try:
+            # Use sudo -n (passwordless) as configured on master; avoid sudo -S pipe
             out, err = self._exec(
-                f"{kc} -n {self._ns} get pods -o wide --no-headers; echo '===STARTED==='; "
-                f"{kc} -n {self._ns} get pods -o custom-columns=':metadata.name,:status.startTime' --no-headers; echo '===METRICS==='; "
-                f"{kc} -n {self._ns} top pods --no-headers 2>/dev/null; echo '===SVC==='; "
-                f"{kc} -n {self._ns} get svc -o wide --no-headers 2>/dev/null"
+                f"{kc} -n {self._ns} get pods -o wide --no-headers 2>&1; echo '===STARTED==='; "
+                f"{kc} -n {self._ns} get pods -o custom-columns=':metadata.name,:status.startTime' --no-headers 2>&1; echo '===METRICS==='; "
+                f"{kc} -n {self._ns} top pods --no-headers 2>&1; echo '===SVC==='; "
+                f"{kc} -n {self._ns} get svc -o custom-columns=':metadata.name,:spec.clusterIP' --no-headers 2>&1; echo '===PING==='; "
+                f"ping -c 1 -W 1 10.91.2.152 2>/dev/null | grep -oE 'time=[0-9.]+' | head -1 || echo 'PING_NONE'"
             )
         except Exception as e:
             print(f"[KubectlRicAdapter] SSH ke {self._ssh['host']} gagal: {e}", flush=True)
@@ -2129,13 +2145,15 @@ class KubectlRicAdapter:
             for k in self._map:
                 self._cache[k] = self._down_component(k, f"kubectl gagal: {reason[:160]}")
             return
-        pods, started, metrics = {}, {}, {}
+        pods, started, metrics, svcs = {}, {}, {}, {}
+        ping_ms = 0.0
         section = "pods"
         for raw in out.splitlines():
             line = raw.strip()
             if line == "===STARTED===": section = "started"; continue
             if line == "===METRICS===": section = "metrics"; continue
             if line == "===SVC===": section = "svc"; continue
+            if line == "===PING===": section = "ping"; continue
             if not line: continue
             if section == "pods":
                 import re
@@ -2152,14 +2170,31 @@ class KubectlRicAdapter:
                             pod_ip = tok
                             if idx + 1 < len(toks): node = toks[idx+1]
                             break
+                        if tok == "<none>":
+                            pod_ip = "<none>"
                     pods[name] = {"ready": ready, "phase": phase, "restarts": restarts, "pod_ip": pod_ip, "node": node}
             elif section == "started":
                 p = line.split()
                 if len(p) >= 2: started[p[0]] = "" if p[1] == "<none>" else p[1]
             elif section == "metrics":
                 p = line.split()
+                # metrics-server: 3 cols (NAME CPU MEM) or 5 cols (NAME CPU_CPU% MEM_MEM%)
                 if len(p) >= 3:
-                    metrics[p[0]] = {"cpu_pct": self._cpu_to_pct(p[1]), "mem_mi": self._to_float_mi(p[2] if len(p) == 3 else p[3])}
+                    # detect format: if len>=5 assume 5-col, else 3-col with CPU=milli/MEM=Mi
+                    if len(p) >= 5:
+                        metrics[p[0]] = {"cpu_pct": self._cpu_to_pct(p[1]), "mem_mi": self._to_float_mi(p[3])}
+                    else:
+                        metrics[p[0]] = {"cpu_pct": self._cpu_to_pct(p[1]), "mem_mi": self._to_float_mi(p[2])}
+            elif section == "svc":
+                p = line.split()
+                if len(p) >= 2:
+                    svcs[p[0]] = p[1]
+            elif section == "ping":
+                import re
+                m = re.search(r'time=([0-9.]+)', line)
+                if m:
+                    try: ping_ms = round(float(m.group(1)), 2)
+                    except: pass
         for comp_id, prefix in self._map.items():
             entry = None
             for pod_name, info in pods.items():
@@ -2176,14 +2211,24 @@ class KubectlRicAdapter:
             met = metrics.get(pod_name, {})
             detail_bits = [f"Pod {pod_name} ({phase}, {info['ready']})"]
             if info["node"]: detail_bits.append(f"node {info['node']}")
-            if info["pod_ip"]: detail_bits.append(f"podIP {info['pod_ip']}")
-            detail_bits.append(f"port 36421/SCTP hostNetwork")
+            if info["pod_ip"] and info["pod_ip"] != "<none>": detail_bits.append(f"podIP {info['pod_ip']}")
+            # E2 SCTP port explicit per task requirement
+            detail_bits.append("E2 36421/SCTP hostNetwork" if info.get("pod_ip") == "10.91.2.153" else "E2 36421/SCTP")
+            # also include service if exists
+            if svcs:
+                detail_bits.append(f"svc {','.join([f'{k}:{v}' for k,v in svcs.items()])}")
+            # uptime human readable in detail
+            uptime = (time.time() - started_at) if started_at else 0
+            detail_bits.append(f"uptime {self._fmt_uptime(int(uptime))}" if uptime else "uptime -")
+            if ping_ms:
+                detail_bits.append(f"latency {ping_ms}ms")
+            host_val = info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else self._ssh["host"]
             self._cache[comp_id] = {
                 "id": comp_id, "name": "FlexRIC RIC", "kind": "near-RT RIC", "status": status,
-                "detail": " • ".join(detail_bits), "host": info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else self._ssh["host"],
+                "detail": " • ".join(detail_bits), "host": host_val,
                 "cpu_pct": met.get("cpu_pct", 0.0), "mem_gb": round(met.get("mem_mi", 0.0) / 1024.0, 2), "mem_pct": 0.0,
-                "throughput_mbps": 0.0, "port": 36421, "latency_ms": 0.0, "active_ues": 0,
-                "last_updated": time.time(), "uptime_seconds": (time.time() - started_at) if started_at else 0, "started_at": started_at or time.time(),
+                "throughput_mbps": 0.0, "port": 36421, "latency_ms": ping_ms, "active_ues": 0,
+                "last_updated": time.time(), "uptime_seconds": uptime, "started_at": started_at or time.time(),
             }
 
     @staticmethod
@@ -2228,6 +2273,18 @@ class KubectlRicAdapter:
             if v.endswith("ki"): return float(v[:-2]) / 1024
             return float(v)
         except Exception: return 0.0
+
+    @staticmethod
+    def _fmt_uptime(secs: int) -> str:
+        try:
+            d, r = divmod(int(secs), 86400)
+            h, r = divmod(r, 3600)
+            m, s = divmod(r, 60)
+            if d: return f"{d}d{h}h{m}m"
+            if h: return f"{h}h{m}m{s}s"
+            if m: return f"{m}m{s}s"
+            return f"{s}s"
+        except Exception: return f"{secs}s"
 
     def _down_component(self, comp_id: str, reason: str) -> dict:
         return {"id": comp_id, "name": "FlexRIC RIC", "kind": "near-RT RIC", "status": "down", "detail": reason, "host": self._ssh["host"], "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0, "throughput_mbps": 0.0, "port": 36421, "latency_ms": 0.0, "active_ues": 0, "last_updated": time.time(), "uptime_seconds": 0, "started_at": time.time()}
@@ -2544,17 +2601,25 @@ def _build_ric_providers() -> dict:
     """
     providers = {}
     # K8s ns ric via kubectl over SSH (hostNetwork deployment flexric-nearrt-ric)
-    ric_k8s_host = os.environ.get("RIC_K8S_SSH_HOST", "") or None
+    # Fallback: RIC_K8S_SSH_HOST else OAI_K8S_SSH_HOST (both default 10.91.2.156 -> same master)
+    ric_k8s_host = os.environ.get("RIC_K8S_SSH_HOST", "") or os.environ.get("OAI_K8S_SSH_HOST", "") or None
+    # also respect nested env from helm extraEnv: allow RIC_K8S_SSH_HOST set via values ric.k8s
+    # namespace/kubeconfig via env fallback as specified in task: ric, /etc/kubernetes/admin.conf
     if ric_k8s_host:
         try:
             ric_ns = os.environ.get("RIC_K8S_NAMESPACE", "ric") or "ric"
             ric_kubeconf = os.environ.get("RIC_K8S_ADMIN_CONF", "/etc/kubernetes/admin.conf") or "/etc/kubernetes/admin.conf"
+            # fallback chain: RIC_K8S_* -> OAI_K8S_* -> defaults (task: namespace ric, kubeconfig /etc/kubernetes/admin.conf)
+            ric_user = os.environ.get("RIC_K8S_SSH_USER", "") or os.environ.get("OAI_K8S_SSH_USER", "telmat") or "telmat"
+            ric_pw = os.environ.get("RIC_K8S_SSH_PASSWORD", "") or os.environ.get("OAI_K8S_SSH_PASSWORD", "") or ""
+            ric_sudo = os.environ.get("RIC_K8S_SUDO_PASSWORD", "") or os.environ.get("K8S_SUDO_PASSWORD", "") or ric_pw or ""
+            ric_port = int(os.environ.get("RIC_K8S_SSH_PORT", "") or os.environ.get("OAI_K8S_SSH_PORT", "22") or "22")
             adapter = KubectlRicAdapter(
                 ssh_host=ric_k8s_host,
-                ssh_user=os.environ.get("RIC_K8S_SSH_USER", "telmat"),
-                ssh_password=os.environ.get("RIC_K8S_SSH_PASSWORD", ""),
-                sudo_password=os.environ.get("RIC_K8S_SUDO_PASSWORD", "") or os.environ.get("K8S_SUDO_PASSWORD", ""),
-                ssh_port=int(os.environ.get("RIC_K8S_SSH_PORT", "22")),
+                ssh_user=ric_user,
+                ssh_password=ric_pw,
+                sudo_password=ric_sudo,
+                ssh_port=ric_port,
                 namespace=ric_ns,
                 kubeconfig=ric_kubeconf,
             )
