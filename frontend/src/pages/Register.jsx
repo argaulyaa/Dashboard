@@ -3,7 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { register } from "../auth.js";
 
 const SERVER_ERROR_MESSAGES = {
-  username_taken: "That username is already registered.",
+  username_taken: "Username already taken, please choose another",
   username_required: "Please enter a username.",
   email_taken: "That email address is already registered.",
   invalid_email: "Please enter a valid email address.",
@@ -46,7 +46,14 @@ export default function Register({ onLoginSuccess }) {
       // Backend mengirim OTP ke email — arahkan ke halaman verifikasi
       navigate("/verify", { state: { username, email } });
     } catch (err) {
-      setError(SERVER_ERROR_MESSAGES[err.message] || "Failed to create account. Please try again.");
+      // Duplicate username handling: block registration and require different username
+      const msg = SERVER_ERROR_MESSAGES[err.message] || err.message || "Failed to create account. Please try again.";
+      // Ensure username_taken shows the required alert text even if backend phrasing varies
+      if (err.message === "username_taken" || String(err.message).includes("username_taken") || String(msg).toLowerCase().includes("already")) {
+        setError("Username already taken, please choose another");
+      } else {
+        setError(msg);
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -121,7 +128,7 @@ export default function Register({ onLoginSuccess }) {
 
             <div className="space-y-2">
               <label className="text-sm font-medium text-on-surface-variant block" htmlFor="username">
-                Network ID
+                Username
               </label>
               <div className="relative group">
                 <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">
@@ -131,7 +138,7 @@ export default function Register({ onLoginSuccess }) {
                   className="w-full bg-white border border-outline-variant rounded-lg pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm"
                   id="username"
                   name="username"
-                  placeholder="Network ID"
+                  placeholder="Username"
                   required
                   type="text"
                   value={username}

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import NetworkTopologyMap from "../components/NetworkTopologyMap.jsx";
+import { fetchMe } from "../auth.js";
 
 
 const DOMAIN_META = {
@@ -132,6 +133,23 @@ function DomainCard({ domainKey, components, onSelect, nowSeconds }) {
 }
 
 export default function Overview({ data, currentUser, onSelect, onReservationChange }) {
+  // displayName uses Full Name from /api/auth/me (full_name), fallback to username if empty, never email/Network ID
+  const [displayName, setDisplayName] = useState(currentUser || "Admin");
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await fetchMe();
+        if (cancelled) return;
+        const fn = (me?.full_name || "").trim();
+        if (fn) setDisplayName(fn);
+        else setDisplayName(currentUser || "Admin");
+      } catch {
+        if (!cancelled) setDisplayName(currentUser || "Admin");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentUser]);
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60000);
@@ -176,7 +194,7 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
         <div>
           <h2 className="font-headline-lg text-headline-lg text-on-surface mb-1">
-            Welcome, {currentUser || "Admin"}
+            Welcome, {displayName}
           </h2>
           <p className="text-body-lg text-on-surface-variant">
             {dateLabel} &middot; {timeLabel}

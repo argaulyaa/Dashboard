@@ -435,6 +435,13 @@ def session_info(session: dict = Depends(get_session_info)):
     }
 
 
+@app.get("/api/auth/me")
+def me(current_user: str = Depends(require_user)):
+    """Current user identity — returns full_name for Overview welcome.
+    Fallback logic is frontend-side: full_name if non-empty else username.
+    Never returns email as display name."""
+    return get_profile(current_user)
+
 @app.get("/api/auth/profile")
 def profile(current_user: str = Depends(require_user)):
     return get_profile(current_user)

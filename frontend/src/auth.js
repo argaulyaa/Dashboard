@@ -68,6 +68,12 @@ export async function fetchProfile() {
   return res.json();
 }
 
+export async function fetchMe() {
+  const res = await fetch("/api/auth/me", { headers: authHeaders() });
+  if (!res.ok) throw new Error("profile_fetch_failed");
+  return res.json();
+}
+
 export async function updateProfile(fullName) {
   const res = await fetch("/api/auth/profile", {
     method: "PATCH",
