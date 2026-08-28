@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from "react";
 import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider, providerLabel } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
-import CoreRanConnectBar from "../components/CoreRanConnectBar.jsx";
 import { usePageHeader } from "../components/PageHeaderContext.jsx";
 
 const STATUS_META = {
@@ -196,7 +195,6 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
 
   return (
     <div className="max-w-[1600px] mx-auto">
-      <CoreRanConnectBar />
       {/* Baris atas: provider tabs (kiri) + kotak Current Operator (kanan).
           Judul halaman pindah ke sticky TopBar via usePageHeader (revisi
           owner t_6c29abe5) — body tidak merender judul lokal lagi. */}

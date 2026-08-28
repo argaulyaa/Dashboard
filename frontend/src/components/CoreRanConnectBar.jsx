@@ -35,20 +35,16 @@ export default function CoreRanConnectBar() {
     return () => clearInterval(id);
   }, []);
 
-  const doConnect = async (dryRun) => {
+  const doConnect = async () => {
     if (!coreSel || !ranSel) {
       setMsg("Please select Core and RAN provider"); setMsgErr(true); return;
     }
     setBusy(true); setMsg(""); setMsgErr(false);
     try {
-      const res = await connectRan(coreSel, ranSel, dryRun);
+      const res = await connectRan(coreSel, ranSel, false);
       const estab = res.ran?.sctp_estab ?? res.sctp_estab;
       const am = res.ran?.amf_addr_set || "";
-      if (dryRun) {
-        setMsg(`DRY RUN: Core ${res.core?.active_ns || coreSel} (${res.core?.svc||""}) -> RAN ${res.ran?.unit} AMF ${am} (no action taken)`);
-      } else {
-        setMsg(`${res.status === "connected" ? "CONNECTED" : "STARTED"}: Core ${res.core?.active_ns} (${res.core?.svc}) -> RAN ${res.ran?.unit} AMF ${am} | SCTP ${estab ? "ESTAB" : "PENDING"}`);
-      }
+      setMsg(`${res.status === "connected" ? "CONNECTED" : "STARTED"}: Core ${res.core?.active_ns} (${res.core?.svc}) -> RAN ${res.ran?.unit} AMF ${am} | SCTP ${estab ? "ESTAB" : "PENDING"}`);
       setMsgErr(false);
       setTimeout(pollStatus, 1500);
     } catch (e) {
@@ -78,8 +74,7 @@ export default function CoreRanConnectBar() {
           <select value={ranSel} onChange={(e) => setRanSel(e.target.value)} className="px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm font-medium">
             {ranProviders.length ? ranProviders.map((p) => <option key={p.key} value={p.key}>{p.label} ({p.key})</option>) : ["oai","srsran"].map((k) => <option key={k} value={k}>{k}</option>)}
           </select>
-          <button onClick={() => doConnect(true)} disabled={busy} className="px-4 py-2 rounded-lg border border-outline-variant text-sm font-bold hover:bg-surface-container disabled:opacity-50">DryRun</button>
-          <button onClick={() => doConnect(false)} disabled={busy} className="px-5 py-2 rounded-lg bg-primary text-on-primary text-sm font-bold shadow-md hover:brightness-110 disabled:opacity-50 flex items-center gap-1">
+          <button onClick={() => doConnect()} disabled={busy} className="px-5 py-2 rounded-lg bg-primary text-on-primary text-sm font-bold shadow-md hover:brightness-110 disabled:opacity-50 flex items-center gap-1">
             {busy ? "..." : <><span className="material-symbols-outlined text-base">bolt</span>Connect</>}
           </button>
         </div>
