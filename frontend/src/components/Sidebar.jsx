@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, Link } from "react-router-dom";
 import { getRole } from "../user.js";
 import { fetchMe } from "../auth.js";
 
@@ -10,7 +10,6 @@ const NAV_ITEMS = [
   { to: "/ric", label: "RIC", icon: "lan" },
   { to: "/reservations", label: "Reservation", icon: "event_available" },
   { to: "/audit-logs", label: "Audit Logs", icon: "shield" },
-  { to: "/profile", label: "Profile", icon: "account_circle" },
 ];
 
 export default function Sidebar({ currentUser, fullName: fullNameProp, onUserChange, onLogout }) {
@@ -89,7 +88,11 @@ export default function Sidebar({ currentUser, fullName: fullNameProp, onUserCha
 
       <div className="p-gutter border-t border-outline-variant">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0" title={displayName}>
+          <Link
+            to="/profile"
+            className="flex items-center gap-3 min-w-0 flex-1 rounded-xl px-2 py-1.5 -mx-2 hover:bg-surface-container-low transition-colors"
+            title="Go to Profile"
+          >
             <div className="w-10 h-10 rounded-full bg-surface-container-highest text-primary flex items-center justify-center font-title-md shrink-0">
               {initials}
             </div>
@@ -101,7 +104,7 @@ export default function Sidebar({ currentUser, fullName: fullNameProp, onUserCha
                 {role === "user" || role === "admin" ? role : "user"}
               </span>
             </div>
-          </div>
+          </Link>
           <button
             className="p-2 text-primary hover:bg-primary-fixed rounded-lg transition-colors flex items-center justify-center shrink-0"
             title="Logout"
