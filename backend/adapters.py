@@ -152,6 +152,25 @@ DEFAULT_OAI_K8S_COMPONENT_MAP = {
     "udr": "oai-udr",
 }
 
+# Pemetaan default open5gs: helm chart open5gs-chart -> open5gs-amf
+# Label K8s: app.kubernetes.io/name=<comp_id> (e.g. amf), app.kubernetes.io/instance=open5gs-chart
+# Bisa dioverride via env OPEN5GS_K8S_COMPONENT_MAP (JSON).
+DEFAULT_OPEN5GS_K8S_COMPONENT_MAP = {
+    "amf": "open5gs-amf",
+    "smf": "open5gs-smf",
+    "upf": "open5gs-upf",
+    "ausf": "open5gs-ausf",
+    "nrf": "open5gs-nrf",
+    "udm": "open5gs-udm",
+    "udr": "open5gs-udr",
+    "pcf": "open5gs-pcf",
+    "bsf": "open5gs-bsf",
+    "nssf": "open5gs-nssf",
+    "scp": "open5gs-scp",
+    "sepp": "open5gs-sepp",
+    "mongodb": "open5gs-mongodb",
+}
+
 
 class CoreAdapter(BaseAdapter):
     """Mock 5G Core adapter — data statis, cocok sebelum testbed OAI siap."""
@@ -742,12 +761,17 @@ class KubectlOaiCoreAdapter:
                     started[p[0]] = "" if p[1] == "<none>" else p[1]
             elif section == "metrics":
                 p = line.split()
-                # NAME CPU(cores) CPU%(?) MEM ... -- format metrics-server:
-                # name  100m  1%  250Mi  2%  (5 kolom)
-                if len(p) >= 4:
+                # metrics-server formats: either 5 cols (NAME CPU CPU% MEM MEM%) or 3 cols (NAME CPU MEM)
+                # contoh baru k8s 1.29: open5gs-amf-xyz 1m 104Mi
+                if len(p) >= 5:
                     metrics[p[0]] = {
                         "cpu_pct": self._cpu_to_pct(p[1]),
                         "mem_mi": self._to_float_mi(p[3]),
+                    }
+                elif len(p) >= 3:
+                    metrics[p[0]] = {
+                        "cpu_pct": self._cpu_to_pct(p[1]),
+                        "mem_mi": self._to_float_mi(p[2]),
                     }
             elif section == "svc":
                 p = line.split()
@@ -853,6 +877,312 @@ class KubectlOaiCoreAdapter:
     @staticmethod
     def _to_float_mi(mem_val: str) -> float:
         """'25392Mi' / '1Gi' -> MiB float."""
+        try:
+            v = mem_val.strip().lower()
+            if v.endswith("mi"):
+                return float(v[:-2])
+            if v.endswith("gi"):
+                return float(v[:-2]) * 1024
+            if v.endswith("ki"):
+                return float(v[:-2]) / 1024
+            return float(v)
+        except Exception:
+            return 0.0
+
+    def _down_component(self, comp_id: str, reason: str) -> dict:
+        return {
+            "id": comp_id,
+            "name": comp_id.upper(),
+            "kind": CORE_KIND_LABELS.get(comp_id, comp_id.upper()),
+            "status": "down",
+            "detail": reason,
+            "host": self._ssh["host"],
+            "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
+            "throughput_mbps": 0.0, "port": 0, "latency_ms": 0.0,
+            "active_ues": 0,
+            "last_updated": time.time(),
+            "uptime_seconds": 0,
+            "started_at": time.time(),
+        }
+
+
+class KubectlOpen5gsCoreAdapter:
+    """
+    Adapter Core open5gs berbasis Kubernetes — membaca state open5GS langsung
+    dari cluster K8s (helm chart open5gs-chart, ns open5gs-chart).
+
+    Clone dari KubectlOaiCoreAdapter tapi:
+      - DEFAULT_OPEN5GS_K8S_COMPONENT_MAP (open5gs-amf/smf/upf/...)
+      - Namespace OPEN5GS_K8S_NAMESPACE (default open5gs-chart -> fallback open5gs)
+      - SSH host OPEN5GS_K8S_SSH_HOST fallback OAI_K8S_SSH_HOST (default 10.91.2.156)
+      - Label selectors: app.kubernetes.io/name=<comp_id> (bukan app=oai-amf)
+        + fallback app=<deploy> untuk kompatibilitas.
+
+    READ-ONLY: hanya get/describe/top/logs. restart() tidak menyentuh cluster.
+    host = pod IP (bukan SSH host) supaya frontend menampilkan alamat nyata pod.
+    cpu/memory real via `kubectl top pods` (butuh metrics-server).
+    """
+
+    CACHE_TTL = 2.5
+
+    def __init__(self, component_map: dict, ssh_host: str, ssh_user: str,
+                 ssh_password: str = "", sudo_password: str = "",
+                 ssh_port: int = 22, namespace: str = "open5gs-chart",
+                 kubeconfig: str = "/etc/kubernetes/admin.conf",
+                 kubectl_bin: str = "kubectl"):
+        self._map = dict(component_map)
+        self._ssh = {
+            "host": ssh_host,
+            "port": int(ssh_port),
+            "user": ssh_user,
+            "password": ssh_password,
+            "sudo": sudo_password or ssh_password,
+        }
+        self._ns = namespace
+        self._kubeconfig = kubeconfig
+        self._kubectl = kubectl_bin
+        self._conn = None
+        self._cache: dict = {}
+        self._last_fetch = 0.0
+
+    def list(self) -> List[dict]:
+        self._maybe_refresh()
+        return [self._cache[c] for c in self._map]
+
+    def get(self, comp_id: str) -> Optional[dict]:
+        if comp_id not in self._map:
+            return None
+        self._maybe_refresh()
+        return self._cache.get(comp_id)
+
+    async def restart(self, comp_id: str) -> Optional[dict]:
+        """Read-only Fase 1: TIDAK mengeksekusi apa pun ke cluster."""
+        if comp_id not in self._map:
+            return None
+        await asyncio.sleep(1.5)
+        self.get(comp_id)
+        result = dict(self._cache.get(comp_id) or {})
+        if result and result.get("status") == "healthy":
+            result["status"] = "restarting"
+            result["detail"] = "Restart request noted (read-only mode; no cluster action)"
+            result["last_updated"] = time.time()
+        return result
+
+    def jitter_health(self):
+        pass
+
+    def get_logs(self, comp_id: str, tail: int = 100) -> str:
+        """Log pod NF via kubectl logs dengan label open5gs."""
+        if comp_id not in self._map:
+            return f"Component '{comp_id}' not mapped in K8s configuration."
+        try:
+            # Prefer app.kubernetes.io/name, fallback app=deploy
+            deploy = self._map[comp_id]
+            out, err = self._exec(
+                f"{self._kctl()} -n {self._ns} logs --tail={int(tail)} "
+                f"--timestamps -l app.kubernetes.io/name={comp_id}")
+            if out.strip():
+                return out.strip()
+            # fallback legacy label app=<deploy>
+            out2, err2 = self._exec(
+                f"{self._kctl()} -n {self._ns} logs --tail={int(tail)} "
+                f"--timestamps -l app={deploy}")
+            return (out2 or "").strip() or (err2.strip() or err.strip() or f"(tidak ada log untuk {deploy})")
+        except Exception as e:
+            return f"[SSH Error] Gagal ambil log '{comp_id}' via kubectl: {e}"
+
+    def _kctl(self) -> str:
+        return (f"sudo -S -p '' {self._kubectl} "
+                f"--kubeconfig={self._kubeconfig}")
+
+    def _exec(self, cmd: str):
+        import paramiko
+        conn = self._conn
+        if conn is None or not conn.get_transport() or not conn.get_transport().is_active():
+            conn = paramiko.SSHClient()
+            conn.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            conn.connect(
+                hostname=self._ssh["host"],
+                port=self._ssh["port"],
+                username=self._ssh["user"],
+                password=self._ssh["password"],
+                timeout=8,
+                banner_timeout=10,
+            )
+            self._conn = conn
+        full = f"echo {_sh_quote(self._ssh['sudo'])} | {cmd}"
+        _, stdout, stderr = conn.exec_command(full, timeout=25)
+        out = stdout.read().decode("utf-8", errors="replace")
+        err = stderr.read().decode("utf-8", errors="replace")
+        return out, err
+
+    def _maybe_refresh(self):
+        now = time.time()
+        if now - self._last_fetch < self.CACHE_TTL:
+            return
+        self._last_fetch = now
+        kc = self._kctl()
+        try:
+            out, err = self._exec(
+                f"{kc} -n {self._ns} get pods -o wide --no-headers; "
+                f"echo '===STARTED==='; "
+                f"{kc} -n {self._ns} get pods -o custom-columns="
+                f"':metadata.name,:status.startTime' --no-headers; "
+                f"echo '===METRICS==='; "
+                f"{kc} -n {self._ns} top pods --no-headers 2>/dev/null; "
+                f"echo '===SVC==='; "
+                f"{kc} -n {self._ns} get svc amf,upf -o custom-columns="
+                f"':metadata.name,:spec.clusterIP' --no-headers 2>/dev/null"
+            )
+        except Exception as e:
+            print(f"[KubectlOpen5gsCoreAdapter] SSH ke {self._ssh['host']} gagal: {e}", flush=True)
+            for comp_id in self._map:
+                self._cache[comp_id] = self._down_component(comp_id, f"SSH ke node K8s gagal: {e}")
+            return
+
+        if "===STARTED===" not in out:
+            reason = (err or out or "kubectl tidak mengembalikan data").strip()
+            for comp_id in self._map:
+                self._cache[comp_id] = self._down_component(comp_id, f"kubectl gagal: {reason[:160]}")
+            return
+
+        pods, started, metrics, svcs = {}, {}, {}, {}
+        section = "pods"
+        for raw in out.splitlines():
+            line = raw.strip()
+            if line == "===STARTED===":
+                section = "started"; continue
+            if line == "===METRICS===":
+                section = "metrics"; continue
+            if line == "===SVC===":
+                section = "svc"; continue
+            if not line:
+                continue
+            if section == "pods":
+                p = line.split(None, 8)
+                if len(p) >= 6:
+                    pods[p[0]] = {
+                        "ready": p[1], "phase": p[2],
+                        "restarts": p[3],
+                        "pod_ip": p[5] if len(p) > 5 else "",
+                        "node": p[6] if len(p) > 6 else "",
+                    }
+            elif section == "started":
+                p = line.split()
+                if len(p) >= 2:
+                    started[p[0]] = "" if p[1] == "<none>" else p[1]
+            elif section == "metrics":
+                p = line.split()
+                # open5gs: support 3-col (1m 104Mi) dan 5-col (100m 1% 250Mi 2%)
+                if len(p) >= 5:
+                    metrics[p[0]] = {
+                        "cpu_pct": self._cpu_to_pct(p[1]),
+                        "mem_mi": self._to_float_mi(p[3]),
+                    }
+                elif len(p) >= 3:
+                    metrics[p[0]] = {
+                        "cpu_pct": self._cpu_to_pct(p[1]),
+                        "mem_mi": self._to_float_mi(p[2]),
+                    }
+            elif section == "svc":
+                p = line.split()
+                if len(p) >= 2:
+                    svcs[p[0]] = p[1]
+
+        for comp_id, prefix in self._map.items():
+            entry = None
+            for pod_name, info in pods.items():
+                if pod_name == prefix or pod_name.startswith(prefix + "-"):
+                    entry = (pod_name, info)
+                    break
+            if entry is None:
+                self._cache[comp_id] = self._down_component(comp_id, f"Pod tidak ditemukan di ns {self._ns}: {prefix}*")
+                continue
+            pod_name, info = entry
+            phase = info["phase"]
+            status = self._map_k8s_status(phase, info["restarts"])
+            start_iso = started.get(pod_name, "")
+            started_at = self._parse_start_time(start_iso)
+            met = metrics.get(pod_name, {})
+            detail_bits = [f"Pod {pod_name} ({phase}, {info['ready']})"]
+            if info["node"]:
+                detail_bits.append(f"node {info['node']}")
+            if info["pod_ip"]:
+                detail_bits.append(f"podIP {info['pod_ip']}")
+            if status == "degraded" and info["restarts"] not in ("0",):
+                detail_bits.append(f"restarts={info['restarts']}")
+            ep = svcs.get(comp_id)
+            if comp_id == "amf" and svcs.get("amf") not in (None, "None"):
+                detail_bits.append(f"N2 endpoint svc/amf {svcs['amf']}")
+            elif ep and ep != "None":
+                detail_bits.append(f"svc {comp_id} {ep}")
+            # host = pod IP (real), fallback to SSH host if pod IP empty (e.g. pending)
+            host_val = info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else self._ssh["host"]
+            self._cache[comp_id] = {
+                "id": comp_id,
+                "name": comp_id.upper(),
+                "kind": CORE_KIND_LABELS.get(comp_id, comp_id.upper()),
+                "status": status,
+                "detail": " • ".join(detail_bits),
+                "host": host_val,
+                "cpu_pct": met.get("cpu_pct", 0.0),
+                "mem_gb": round(met.get("mem_mi", 0.0) / 1024.0, 2),
+                "mem_pct": 0.0,
+                "throughput_mbps": 0.0,
+                "port": NF_PORT_HINTS.get(comp_id, 0),
+                "latency_ms": 0.0,
+                "active_ues": 0,
+                "last_updated": time.time(),
+                "uptime_seconds": (time.time() - started_at) if started_at else 0,
+                "started_at": started_at or time.time(),
+            }
+
+    @staticmethod
+    def _map_k8s_status(phase: str, restarts: str = "0") -> Status:
+        s = (phase or "").lower()
+        if "running" in s:
+            try:
+                if int(str(restarts).split("(")[0]) >= 10:
+                    return "degraded"
+            except Exception:
+                pass
+            return "healthy"
+        if "pending" in s or "containercreating" in s or "init:" in s:
+            return "degraded"
+        if "crashloopbackoff" in s or "error" in s or "evicted" in s:
+            return "down"
+        if "terminated" in s or "completed" in s:
+            return "degraded"
+        return "degraded"
+
+    @staticmethod
+    def _parse_start_time(iso_str: str) -> Optional[float]:
+        if not iso_str:
+            return None
+        try:
+            from datetime import datetime, timezone
+            s = iso_str.strip().rstrip("Z")
+            if "." in s:
+                s = s.split(".")[0]
+            dt = datetime.strptime(s, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _cpu_to_pct(cpu_cores: str) -> float:
+        try:
+            c = cpu_cores.strip().lower()
+            if c.endswith("n"):
+                return round(float(c[:-1]) / 1e7, 1)
+            if c.endswith("m"):
+                return round(float(c[:-1]) / 10.0, 1)
+            return round(float(c), 1)
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _to_float_mi(mem_val: str) -> float:
         try:
             v = mem_val.strip().lower()
             if v.endswith("mi"):
@@ -1454,21 +1784,63 @@ def _build_core_providers() -> dict:
         "adapter": adapter,
     }
 
-    # --- open5gs via Docker ---
-    open5gs_raw = os.environ.get("OPEN5GS_CORE_CONTAINERS", "")
-    open5gs_docker_host = os.environ.get("OPEN5GS_DOCKER_HOST", "") or None
-    if open5gs_raw:
+    # --- open5gs via Kubernetes (live) else Docker else mock ---
+    open5gs_k8s_host = os.environ.get("OPEN5GS_K8S_SSH_HOST", "") or os.environ.get("OAI_K8S_SSH_HOST", "") or None
+    # If no dedicated open5gs host, fallback to OAI host (same master 10.91.2.156 holds both namespaces)
+    if not open5gs_k8s_host:
+        # also check legacy OAI_K8S_SSH_HOST already captured above, but fallback explicit
+        open5gs_k8s_host = os.environ.get("OAI_K8S_SSH_HOST", "") or None
+    adapter_5gs = None
+    open5gs_desc = None
+    if open5gs_k8s_host:
         try:
-            container_map = json.loads(open5gs_raw)
-            adapter_5gs = DockerCoreAdapter(container_map, docker_host=open5gs_docker_host)
-        except Exception:
+            k8s_map_5gs = dict(DEFAULT_OPEN5GS_K8S_COMPONENT_MAP)
+            custom_5gs = os.environ.get("OPEN5GS_K8S_COMPONENT_MAP", "")
+            if custom_5gs:
+                try:
+                    k8s_map_5gs.update(json.loads(custom_5gs))
+                except Exception:
+                    pass
+            open5gs_ns = os.environ.get("OPEN5GS_K8S_NAMESPACE", "") or os.environ.get("OPEN5GS_NAMESPACE", "") or "open5gs-chart"
+            # sanitize: if env contains open5gs value like "open5gs" use it, else default chart
+            open5gs_user = os.environ.get("OPEN5GS_K8S_SSH_USER", "") or os.environ.get("OAI_K8S_SSH_USER", "telmat") or "telmat"
+            open5gs_port = int(os.environ.get("OPEN5GS_K8S_SSH_PORT", "") or os.environ.get("OAI_K8S_SSH_PORT", "22") or "22")
+            open5gs_pw = os.environ.get("OPEN5GS_K8S_SSH_PASSWORD", "") or os.environ.get("OAI_K8S_SSH_PASSWORD", "") or ""
+            open5gs_sudo = os.environ.get("OPEN5GS_K8S_SUDO_PASSWORD", "") or os.environ.get("K8S_SUDO_PASSWORD", "") or open5gs_pw or ""
+            open5gs_kubeconf = os.environ.get("OPEN5GS_K8S_ADMIN_CONF", "") or os.environ.get("OAI_K8S_ADMIN_CONF", "/etc/kubernetes/admin.conf") or "/etc/kubernetes/admin.conf"
+            adapter_5gs = KubectlOpen5gsCoreAdapter(
+                k8s_map_5gs,
+                ssh_host=open5gs_k8s_host,
+                ssh_user=open5gs_user,
+                ssh_password=open5gs_pw,
+                sudo_password=open5gs_sudo,
+                ssh_port=open5gs_port,
+                namespace=open5gs_ns,
+                kubeconfig=open5gs_kubeconf,
+            )
+            open5gs_desc = f"open5gs 5G Core — live dari Kubernetes (ns {open5gs_ns} via kubectl@{open5gs_k8s_host})"
+        except Exception as e:
+            print(f"[open5gs K8s] fallback mock due to {e}", flush=True)
             adapter_5gs = CoreAdapter()
-    else:
-        adapter_5gs = CoreAdapter()  # fallback mock
+            open5gs_desc = "open5gs 5G Core (fallback mock — env K8s invalid)"
+    if adapter_5gs is None:
+        open5gs_raw = os.environ.get("OPEN5GS_CORE_CONTAINERS", "")
+        open5gs_docker_host = os.environ.get("OPEN5GS_DOCKER_HOST", "") or None
+        if open5gs_raw:
+            try:
+                container_map = json.loads(open5gs_raw)
+                adapter_5gs = DockerCoreAdapter(container_map, docker_host=open5gs_docker_host)
+                open5gs_desc = "open5gs 5G Core (Docker Engine API)"
+            except Exception:
+                adapter_5gs = CoreAdapter()
+                open5gs_desc = "open5gs 5G Core (mock fallback)"
+        else:
+            adapter_5gs = CoreAdapter()
+            open5gs_desc = "open5gs 5G Core (mock)"
     providers["open5gs"] = {
         "label": "open5gs",
         "icon": "dns",
-        "desc": "open5gs 5G Core (Docker Engine API)",
+        "desc": open5gs_desc,
         "adapter": adapter_5gs,
     }
 

@@ -2,16 +2,10 @@
 # Helm chart for the O-RAN Control Dashboard. Docs: deploy/README.md
 
 # ---- Images ----
-# Build & push with the backend/ and frontend/ Dockerfiles first, then set
-# the repository/tag you pushed to (e.g. ghcr.io/argaulyaa/...).
 image:
   pullPolicy: Always
-  # ghcr.io is a private registry — this secret lets the kubelet pull the images.
-  # Managed by CI (created if missing) or by hand: `kubectl create secret docker-registry
-  # ghcr-secret -n dashboard --docker-server=ghcr.io --docker-username=<user> --docker-password=<PAT>`.
   pullSecrets:
     - name: ghcr-secret
-  # override per component below
 
 backend:
   replicas: 1
@@ -22,38 +16,23 @@ backend:
     type: ClusterIP
     port: 8000
   resources: {}
-  # Pin backend to node `core` — it is the only node with the SSH routes to the
-  # testbed core/ran hosts and (historically) preloaded images. Matches live deploy.
   nodeSelector:
     kubernetes.io/hostname: core
   tolerations: []
   affinity: {}
-  # Extra env vars (overrides for anything not covered below)
   extraEnv: {}
   oai:
-    # 5G Core OAI — reached via SSH from the pod
     sshHost: "10.91.2.151"
     sshPort: "22"
     sshUser: "core"
     sshPassword: "telmat123"
     containers: '{"amf":"oai-amf","smf":"oai-smf","upf":"oai-upf","nrf":"oai-nrf","ausf":"oai-ausf","udm":"oai-udm","udr":"oai-udr","mysql":"mysql","ext-dn":"oai-ext-dn"}'
   ran:
-    # RAN gNB — detect OAI nr-softmodem / srsRAN `gnb` via SSH. Set sshHost to
-    # the RAN node IP to enable real RAN data; leave empty ("") for RAN mock.
     sshHost: "10.91.2.152"
     sshPort: "22"
     sshUser: "ran"
     sshPassword: "telmat123"
   k8s:
-    # OAI 5G Core di Kubernetes (ns 5g-core) — provider "k8s", READ-ONLY fase 1:
-    # data Deployment dibaca via SSH kubectl ke node master. Restart
-    # dinonaktifkan di fase ini. KEAMANAN: biarkan nilai di bawah KOSONG di
-    # repo/git — host/user/password ASLI diisi SAAT DEPLOY via
-    #   helm upgrade ... --set backend.k8s.sshHost=... \
-    #                    --set backend.k8s.sshPassword=... \
-    #                    --set backend.k8s.sudoPassword=...
-    # atau `kubectl edit secret oran-backend -n dashboard`.
-    # sshHost kosong ("") = provider k8s jatuh ke mock (dashboard tetap jalan).
     sshHost: ""
     sshPort: "22"
     sshUser: ""
@@ -61,24 +40,19 @@ backend:
     sudoPassword: ""
     namespace: "5g-core"
     kubeconfig: "/etc/kubernetes/admin.conf"
+  open5gs:
+    sshHost: ""
+    sshPort: "22"
+    sshUser: ""
+    sshPassword: ""
+    sudoPassword: ""
+    namespace: "open5gs-chart"
+    kubeconfig: "/etc/kubernetes/admin.conf"
 
 auth:
-  # Format "user:pass,user2:pass2" (default admin:admin)
   oranUsers: "admin:admin"
 
 smtp:
-  # ---- Email verifikasi (OTP) via SMTP ----
-  # PENTING — KEAMANAN: biarkan nilai-nilai di bawah KOSONG ("") di repo/git.
-  # Kredensial ASLI (host/user/password/from) diisi SAAT DEPLOY langsung di
-  # cluster, misal:
-  #   helm upgrade ... --set smtp.host=smtp.gmail.com \
-  #                    --set smtp.user=xxx@gmail.com \
-  #                    --set smtp.password=<app-password> \
-  #                    --set smtp.from=xxx@gmail.com
-  # (atau `kubectl edit secret <fullname>-backend -n dashboard`).
-  # Jangan pernah commit kredensial email ke git.
-  # Catatan perilaku backend: jika SMTP_HOST kosong, pengiriman OTP FAIL-CLOSED
-  # (register/resend gagal dengan 503) — OTP TIDAK PERNAH dicetak ke log.
   host: ''
   port: '587'
   user: ''
@@ -86,7 +60,6 @@ smtp:
   from: ''
 
 database:
-  # See backend/database.py — sqlite path is under /data (mounted volume)
   url: "sqlite:////data/oran_dashboard.db"
 
 persistence:
@@ -101,15 +74,9 @@ frontend:
     tag: latest
   nodeSelector:
     kubernetes.io/hostname: core
-  # Expose options:
-  #   NodePort  → http://<nodeIP>:30080  (simplest, no extra components)
-  #   Ingress   → needs an ingress controller; see ingress below
   serviceType: NodePort
   nodePort: 30090
   ingress:
     enabled: false
     className: ""
     host: dashboard.local
-    # tls:
-    #   - hosts: [dashboard.local]
-    #     secretName: oran-dashboard-tls
