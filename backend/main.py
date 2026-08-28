@@ -225,6 +225,12 @@ def activate_provider(
         raise HTTPException(404, f"Unknown domain '{domain}'")
     if body.provider not in providers:
         raise HTTPException(400, f"Unknown provider '{body.provider}' for domain '{domain}'")
+    # Gate: requires active booking (admin bypass) — frontend also disables button
+    is_admin_user = (current_user == "admin" or get_user_role(current_user) == "admin")
+    if not is_admin_user:
+        import booking as _booking_svc
+        if not _booking_svc.get_my_active_reservation(current_user):
+            raise HTTPException(403, detail={"reason": "not_in_reservation", "message": "Requires active booking — book a session at /reservations"})
     with get_db_session() as db:
         row = db.query(ActiveProviderModel).filter(ActiveProviderModel.domain == domain).first()
         active_provider = row.provider if row else None

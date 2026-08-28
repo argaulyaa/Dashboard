@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { fetchProviders, fetchRanStatus, connectRan, disconnectRan } from "../api.js";
+import { fetchProviders, fetchRanStatus, connectRan, disconnectRan, fetchActiveBooking } from "../api.js";
+import { getRole } from "../user.js";
 
 export default function CoreRanConnectBar() {
   const [coreProviders, setCoreProviders] = useState([]);
@@ -10,6 +11,21 @@ export default function CoreRanConnectBar() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [msgErr, setMsgErr] = useState(false);
+  const [hasActive, setHasActive] = useState(null); // null=loading, true/false
+
+  const isAdmin = useMemo(() => {
+    try { return getRole() === "admin"; } catch { return false; }
+  }, []);
+
+  const checkActive = async () => {
+    if (isAdmin) { setHasActive(true); return; }
+    try {
+      const a = await fetchActiveBooking();
+      setHasActive(!!a);
+    } catch {
+      setHasActive(false);
+    }
+  };
 
   useEffect(() => {
     fetchProviders("core").then((l) => {
@@ -20,7 +36,13 @@ export default function CoreRanConnectBar() {
       setRanProviders(l);
       if (l.length) setRanSel(l[0].key);
     }).catch(() => {});
-  }, []);
+    checkActive();
+  }, [isAdmin]);
+
+  useEffect(() => {
+    const id = setInterval(checkActive, 8000);
+    return () => clearInterval(id);
+  }, [isAdmin]);
 
   const pollStatus = async () => {
     try {
@@ -35,7 +57,10 @@ export default function CoreRanConnectBar() {
     return () => clearInterval(id);
   }, []);
 
+  const blocked = !isAdmin && hasActive === false;
+
   const doConnect = async () => {
+    if (blocked) { setMsg("Requires active booking — book a session first"); setMsgErr(true); return; }
     if (!coreSel || !ranSel) {
       setMsg("Please select Core and RAN provider"); setMsgErr(true); return;
     }
@@ -54,6 +79,8 @@ export default function CoreRanConnectBar() {
   };
 
   const doDisconnect = async () => {
+    // Disconnect also gated? Allow if blocked? Spec says gate Connect; but we gate both for consistency unless admin
+    if (blocked) { setMsg("Requires active booking"); setMsgErr(true); return; }
     if (!coreSel || !ranSel) {
       setMsg("Please select Core and RAN provider"); setMsgErr(true); return;
     }
@@ -110,6 +137,12 @@ export default function CoreRanConnectBar() {
 
   return (
     <div className="mb-6 glass-card rounded-2xl border border-outline-variant p-4 shadow-sm">
+      {blocked && (
+        <div className="mb-3 flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-xs font-medium">
+          <span>⚠ No active session - book a session to connect</span>
+          <a href="#/reservations" className="shrink-0 px-3 py-1 rounded-lg bg-amber-600 text-white font-bold hover:bg-amber-700">Book now →</a>
+        </div>
+      )}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <div className="flex items-center gap-3">
           <span className="material-symbols-outlined text-primary text-[22px]">link</span>
@@ -124,22 +157,22 @@ export default function CoreRanConnectBar() {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <select value={coreSel} onChange={(e) => setCoreSel(e.target.value)} className="px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm font-medium">
+          <select value={coreSel} onChange={(e) => setCoreSel(e.target.value)} disabled={blocked} className={`px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm font-medium ${blocked ? "opacity-50 cursor-not-allowed" : ""}`}>
             {coreProviders.map((p) => <option key={p.key} value={p.key}>{p.label} ({p.key})</option>)}
           </select>
           <span className="text-on-surface-variant">↔</span>
-          <select value={ranSel} onChange={(e) => setRanSel(e.target.value)} className="px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm font-medium">
+          <select value={ranSel} onChange={(e) => setRanSel(e.target.value)} disabled={blocked} className={`px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm font-medium ${blocked ? "opacity-50 cursor-not-allowed" : ""}`}>
             {ranProviders.length ? ranProviders.map((p) => <option key={p.key} value={p.key}>{p.label} ({p.key})</option>) : ["oai","srsran"].map((k) => <option key={k} value={k}>{k}</option>)}
           </select>
           <button
             onClick={handleToggle}
-            disabled={busy}
+            disabled={busy || blocked}
             className={`px-5 py-2 rounded-lg text-sm font-bold shadow-md hover:brightness-110 disabled:opacity-50 flex items-center gap-1.5 transition-colors ${
               isConnected
                 ? "bg-error text-on-error border border-error"
                 : "bg-primary text-on-primary"
             }`}
-            title={isConnected ? `Disconnect ${ranSel} from ${coreSel} (scale ${selectedNs || coreSel} to 0 + stop unit)` : `Connect ${ranSel} to ${coreSel}`}
+            title={blocked ? "Requires active booking — book a session at /reservations" : isConnected ? `Disconnect ${ranSel} from ${coreSel} (scale ${selectedNs || coreSel} to 0 + stop unit)` : `Connect ${ranSel} to ${coreSel}`}
           >
             {busy ? "..." : isConnected ? (
               <>

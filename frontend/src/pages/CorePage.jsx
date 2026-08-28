@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from "react";
-import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider, providerLabel } from "../api.js";
+import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider, providerLabel, fetchActiveBooking } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
 import CoreRanConnectBar from "../components/CoreRanConnectBar.jsx";
@@ -63,6 +63,20 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
   // Default provider sudah punya data live dari WebSocket (`components` prop).
   const [providerHealthMap, setProviderHealthMap] = useState({});
 
+  // Reservation gate for Activate (power_settings_new): requires active booking
+  const [hasBooking, setHasBooking] = useState(null);
+  const isAdminRole = useMemo(() => { try { return getRole() === "admin"; } catch { return false; } }, []);
+  useEffect(() => {
+    const check = async () => {
+      if (isAdminRole) { setHasBooking(true); return; }
+      try { const a = await fetchActiveBooking(); setHasBooking(!!a); } catch { setHasBooking(false); }
+    };
+    check();
+    const id = setInterval(check, 8000);
+    return () => clearInterval(id);
+  }, [isAdminRole]);
+  const blockedByBooking = !isAdminRole && hasBooking === false;
+
   useEffect(() => {
     fetchProviders("core")
       .then((list) => {
@@ -120,6 +134,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
 
   const handleToggleActivation = async () => {
     if (isViewer || !activeProvider) return;
+    if (blockedByBooking) { alert("Requires active booking — book a session at /reservations"); return; }
     if (activatedKey != null && !isActiveTab) {
       // Provider lain sedang aktif -> minta konfirmasi switch (server akan
       // menolak langsung dengan 409 kalau kita paksa, jadi alurnya terpandu).
@@ -395,9 +410,11 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
                 Viewer: lihat status tapi tombol disabled. */}
             <button
               onClick={handleToggleActivation}
-              disabled={isBusy || isViewer || (activatedKey != null && !isActiveTab)}
+              disabled={isBusy || isViewer || (activatedKey != null && !isActiveTab) || blockedByBooking}
               title={
-                isViewer
+                blockedByBooking
+                  ? "Requires active booking — book a session at /reservations"
+                  : isViewer
                   ? "Viewers cannot activate providers"
                   : activatedKey != null && !isActiveTab
                     ? `Provider ${activatedLabel} sedang aktif — nonaktifkan dulu`

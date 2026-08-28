@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider, providerLabel } from "../api.js";
+import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider, providerLabel, fetchActiveBooking } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
 import { usePageHeader } from "../components/PageHeaderContext.jsx";
@@ -118,6 +118,20 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
   const activeCoreKey = telemetryMeta?.active?.core ?? null; // null = belum ada data WS
   const hasCoreData = telemetryMeta?.active != null;
 
+  // Reservation gate for Activate: requires active booking (admin bypass)
+  const [hasBooking, setHasBooking] = useState(null);
+  const isAdminRole = useMemo(() => { try { return getRole() === "admin"; } catch { return false; } }, []);
+  useEffect(() => {
+    const check = async () => {
+      if (isAdminRole) { setHasBooking(true); return; }
+      try { const a = await fetchActiveBooking(); setHasBooking(!!a); } catch { setHasBooking(false); }
+    };
+    check();
+    const id = setInterval(check, 8000);
+    return () => clearInterval(id);
+  }, [isAdminRole]);
+  const blockedByBooking = !isAdminRole && hasBooking === false;
+
   // ---- Provider activation state ----
   // RBAC 2-role: user & admin sama-sama operator penuh.
   const isViewer = false;
@@ -164,6 +178,7 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
   // akan jadi pengaman kedua saat akting RAN direalisasikan).
   const handleToggleActivation = async () => {
     if (isViewer || !activeProvider) return;
+    if (blockedByBooking) { alert("Requires active booking — book a session at /reservations"); return; }
     if (!isActiveTab && !activatedKey && hasCoreData && !activeCoreKey) {
       alert("Aktifkan Core dulu di halaman Core sebelum mengaktifkan RAN.");
       return;
@@ -400,9 +415,11 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
                     tombol disabled. Viewer: lihat status tapi tombol disabled. */}
                 <button
                   onClick={handleToggleActivation}
-                  disabled={isBusy || isViewer || (activatedKey != null && !isActiveTab) || (!activatedKey && hasCoreData && !activeCoreKey)}
+                  disabled={isBusy || isViewer || (activatedKey != null && !isActiveTab) || (!activatedKey && hasCoreData && !activeCoreKey) || blockedByBooking}
                   title={
-                    isViewer
+                    blockedByBooking
+                      ? "Requires active booking — book a session at /reservations"
+                      : isViewer
                       ? "Viewers cannot activate providers"
                       : activatedKey != null && !isActiveTab
                         ? `Provider ${activatedLabel} sedang aktif — nonaktifkan dulu`

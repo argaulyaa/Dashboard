@@ -119,6 +119,7 @@ export default function ReservationPage({ data, currentUser }) {
     const startTs = new Date(startAt).getTime() / 1000;
     const endTs = new Date(endAt).getTime() / 1000;
     if (isNaN(startTs) || isNaN(endTs) || startTs >= endTs) { setErr("Invalid time range"); return; }
+    if ((endTs - startTs) > 3600) { setErr("Max 1 hour per booking (3600s) exceeded"); return; }
     setLoading(true);
     try {
       await bookReservation(startTs, endTs);

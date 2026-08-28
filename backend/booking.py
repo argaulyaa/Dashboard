@@ -42,6 +42,8 @@ def book(user: str, start_at: float, end_at: float, core_provider: str | None = 
         return {"ok": False, "reason": "invalid_time", "message": "start_at/end_at must be timestamps"}
     if start_at >= end_at:
         return {"ok": False, "reason": "invalid_range", "message": "start_at must be before end_at"}
+    if (end_at - start_at) > 3600:
+        return {"ok": False, "reason": "max_duration_exceeded", "message": "Max 1 hour per booking (3600s) exceeded"}
     if end_at <= now:
         return {"ok": False, "reason": "past_slot", "message": "end_at must be in the future"}
     if start_at < now - 60:
