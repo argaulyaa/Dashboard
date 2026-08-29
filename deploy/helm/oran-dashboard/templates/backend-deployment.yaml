@@ -41,7 +41,7 @@ spec:
             - name: http
               containerPort: 8000
           envFrom:
-            {{- if or .Values.backend.oai.sshHost .Values.backend.ran.sshHost .Values.backend.k8s.sshHost }}
+            {{- if or .Values.backend.oai.sshHost .Values.backend.ran.sshHost .Values.backend.k8s.sshHost .Values.backend.open5gs.sshHost .Values.backend.ric.sshHost .Values.backend.ric.k8s.sshHost .Values.backend.ric.k8sSshHost }}
             - configMapRef:
                 name: {{ include "oran-dashboard.fullname" . }}-backend
             {{- end }}

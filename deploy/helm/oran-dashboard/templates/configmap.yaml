@@ -25,12 +25,12 @@ data:
   OAI_K8S_NAMESPACE: {{ .Values.backend.k8s.namespace | quote }}
   OAI_K8S_ADMIN_CONF: {{ .Values.backend.k8s.kubeconfig | quote }}
   {{- end }}
-  {{- if .Values.backend.open5gs.sshHost }}
-  OPEN5GS_K8S_SSH_HOST: {{ .Values.backend.open5gs.sshHost | quote }}
-  OPEN5GS_K8S_SSH_PORT: {{ .Values.backend.open5gs.sshPort | quote }}
-  OPEN5GS_K8S_SSH_USER: {{ .Values.backend.open5gs.sshUser | quote }}
-  OPEN5GS_K8S_NAMESPACE: {{ .Values.backend.open5gs.namespace | quote }}
-  OPEN5GS_K8S_ADMIN_CONF: {{ .Values.backend.open5gs.kubeconfig | quote }}
+  {{- if or .Values.backend.open5gs.sshHost .Values.backend.k8s.sshHost }}
+  OPEN5GS_K8S_SSH_HOST: {{ coalesce .Values.backend.open5gs.sshHost .Values.backend.k8s.sshHost | quote }}
+  OPEN5GS_K8S_SSH_PORT: {{ coalesce .Values.backend.open5gs.sshPort .Values.backend.k8s.sshPort | quote }}
+  OPEN5GS_K8S_SSH_USER: {{ coalesce .Values.backend.open5gs.sshUser .Values.backend.k8s.sshUser | quote }}
+  OPEN5GS_K8S_NAMESPACE: {{ coalesce .Values.backend.open5gs.namespace .Values.backend.k8s.namespace | quote }}
+  OPEN5GS_K8S_ADMIN_CONF: {{ coalesce .Values.backend.open5gs.kubeconfig .Values.backend.k8s.kubeconfig | quote }}
   {{- end }}
   {{- if .Values.backend.ric.sshHost }}
   RIC_SSH_HOST: {{ .Values.backend.ric.sshHost | quote }}
