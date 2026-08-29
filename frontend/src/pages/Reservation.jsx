@@ -145,7 +145,6 @@ export default function ReservationPage({ currentUser }) {
     <div className="max-w-[1600px] mx-auto space-y-6">
       <div>
         <h2 className="font-headline-md text-headline-md text-on-surface">Reservation Booking</h2>
-        <p className="text-on-surface-variant opacity-70">Book exclusive session (time only) — Core/RAN provider choice is on the Core page. Single B210 testbed: any overlap globally blocks.</p>
       </div>
 
       {/* Active Session — time & status only, no provider pick */}
