@@ -292,8 +292,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
           })}
         </div>
 
-        {/* Current Operator — F2: sumber kebenaran = status aktivasi eksplisit.
-            Dua baris: siapa yang DI-AKTIFKAN + apakah benar-benar hidup (LIVE). */}
+        {/* Current Operator — clean: provider label + health dot only (no LIVE/ACTIVE words) */}
         <div className="shrink-0 glass-card border border-outline-variant rounded-2xl px-5 py-3 shadow-sm flex items-center gap-3 self-start">
           <span className="material-symbols-outlined text-primary text-xl">
             {currentOperator?.icon || "cloud_off"}
@@ -303,20 +302,16 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
             <p className="font-bold text-sm text-on-surface">
               {currentOperator?.label ?? "None"}
             </p>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              {currentOperator && (
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary-container text-on-primary-container">
-                  ACTIVATED
+            {currentOperator ? (
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className={`w-1.5 h-1.5 rounded-full ${currentOperator.health === "healthy" ? "bg-secondary" : currentOperator.health === "degraded" ? "bg-tertiary" : "bg-error"}`} />
+                <span className="text-[10px] font-bold text-on-surface-variant">
+                  {HEALTH_BADGE_LABEL[currentOperator.health]}
                 </span>
-              )}
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                currentOperator
-                  ? HEALTH_BADGE_CLASS[currentOperator.health]
-                  : "bg-surface-container text-on-surface-variant"
-              }`}>
-                ● LIVE: {currentOperator ? HEALTH_BADGE_LABEL[currentOperator.health] : "NO ACTIVE PROVIDER"}
-              </span>
-            </div>
+              </div>
+            ) : (
+              <p className="text-[10px] font-bold text-on-surface-variant mt-0.5">No active provider</p>
+            )}
           </div>
         </div>
       </div>
