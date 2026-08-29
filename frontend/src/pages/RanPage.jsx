@@ -249,26 +249,16 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
           })}
         </div>
 
-        {/* Current Operator — clean: provider label + health dot only (no LIVE/ACTIVE words) */}
+        {/* Current Operator — minimal: label + provider name only (no health/dot/badge) */}
         <div className="shrink-0 glass-card border border-outline-variant rounded-2xl px-5 py-3 shadow-sm flex items-center gap-3 self-start">
           <span className="material-symbols-outlined text-primary text-xl">
-            {currentOperator?.icon || "cloud_off"}
+            {currentOperator?.icon || "cloud"}
           </span>
           <div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Current Operator</p>
             <p className="font-bold text-sm text-on-surface">
               {currentOperator?.label ?? "None"}
             </p>
-            {currentOperator ? (
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span className={`w-1.5 h-1.5 rounded-full ${currentOperator.health === "healthy" ? "bg-secondary" : currentOperator.health === "degraded" ? "bg-tertiary" : "bg-error"}`} />
-                <span className="text-[10px] font-bold text-on-surface-variant">
-                  {HEALTH_BADGE_LABEL[currentOperator.health]}
-                </span>
-              </div>
-            ) : (
-              <p className="text-[10px] font-bold text-on-surface-variant mt-0.5">No active provider</p>
-            )}
           </div>
         </div>
       </div>
