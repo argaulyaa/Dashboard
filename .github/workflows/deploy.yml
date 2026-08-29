@@ -43,8 +43,6 @@ jobs:
           tags: |
             ${{ env.BACKEND_IMAGE }}:latest
             ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Build & push frontend
         uses: docker/build-push-action@v5
@@ -54,8 +52,6 @@ jobs:
           tags: |
             ${{ env.FRONTEND_IMAGE }}:latest
             ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       # ghcr.io is a private registry. The chart references the `ghcr-secret`
       # dockerconfig secret via image.imagePullSecrets (see values.yaml) so the kubelet can
