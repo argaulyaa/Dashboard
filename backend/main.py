@@ -81,6 +81,27 @@ def log_audit(username: str, action: str, domain: str = None, component_id: str 
         print(f"[Audit Log Warning] Could not record audit log: {e}")
 
 
+def log_activity(user: str, action: str, detail: str = ""):
+    """Helper for Recent Activity feed (spec activity_log). Persistent helper.
+
+    Spec requires: log_activity(user, action, detail) -> activity_log table
+    (id, user, action, detail, timestamp) in oran_dashboard.db.
+    Best-effort: never raises.
+    """
+    try:
+        from models import ActivityLogModel2
+        with get_db_session() as db:
+            row = ActivityLogModel2(
+                user=(user or "").strip()[:64],
+                action=(action or "").strip()[:64],
+                detail=(detail or "").strip()[:500],
+                timestamp=time.time(),
+            )
+            db.add(row)
+    except Exception as e:
+        print(f"[Activity Log Warning] {e}")
+
+
 class ReserveRequest(BaseModel):
     user: str
     start_at: float
@@ -293,12 +314,14 @@ def login(body: LoginRequest, request: Request):
     client_ip = request.client.host if request.client else ""
     token = authenticate(body.username, body.password, ip=client_ip)
     if not token:
+        log_activity(body.username, "login_failed", "invalid credentials")
         raise HTTPException(401, "invalid_credentials")
     # Lookup real username (case: user logged in with email)
     from auth import _session_for
     session = _session_for(token)
     real_username = session["user"] if session else body.username
     log_audit(real_username, "LOGIN", ip=client_ip)
+    log_activity(real_username, "login", f"{real_username} logged in")
     return {"token": token, "user": real_username, "role": get_user_role(real_username)}
 
 
@@ -327,6 +350,7 @@ def register(body: RegisterRequest, request: Request):
             )
         raise
     log_audit(body.username, "REGISTER_PENDING", detail=f"Email: {body.email}; Role: user", ip=client_ip)
+    log_activity(body.username, "register", f"{body.username} requested registration")
     return {"ok": True, "username": body.username, "message": "OTP sent to email. Please verify."}
 
 
@@ -358,6 +382,7 @@ def verify_email(body: VerifyOtpRequest, request: Request):
         detail=f"Email: {user_info['email']}; Role: {user_info.get('role', 'user')}",
         ip=client_ip,
     )
+    log_activity(body.username, "register", f"{body.username} verified email — account created")
     return {"ok": True, "token": token, "user": user_info["username"], "role": user_info["role"]}
 
 
@@ -429,6 +454,20 @@ def get_audit_logs(current_user: str = Depends(require_admin)):
     with get_db_session() as db:
         logs = db.query(AuditLogModel).order_by(AuditLogModel.timestamp.desc()).limit(100).all()
         return [l.to_dict() for l in logs]
+
+
+@app.get("/api/activity/recent")
+def get_recent_activity(limit: int = Query(default=5, ge=1, le=20), current_user: str = Depends(require_user)):
+    """Recent Activity feed — mixed real events. Spec: GET /api/activity/recent?limit=5 returns last 5-10. Auth required."""
+    lim = max(1, min(int(limit or 5), 20))
+    try:
+        from models import ActivityLogModel2
+        with get_db_session() as db:
+            rows = db.query(ActivityLogModel2).order_by(ActivityLogModel2.timestamp.desc()).limit(lim).all()
+            return [r.to_dict() for r in rows]
+    except Exception as e:
+        print(f"[Activity recent warning] {e}")
+        return []
 
 
 @app.get("/api/auth/session")
@@ -572,8 +611,10 @@ async def restart_component(
     adapter = _get_adapter(domain, provider)
     result = await adapter.restart(comp_id)
     if result is None:
+        log_activity(current_user, "restart_failed", f"restart {domain}/{comp_id} not found")
         raise HTTPException(404, f"Unknown component '{comp_id}' in domain '{domain}'")
     log_audit(current_user, "RESTART_COMPONENT", domain=domain, component_id=comp_id)
+    log_activity(current_user, "restart", f"{current_user} restarted {domain}/{comp_id}")
     return _with_reservation(domain, result)
 
 
@@ -1034,10 +1075,12 @@ def book_reservation(body: BookRequest, current_user: str = Depends(require_user
         raise HTTPException(400, str(e))
     result = booking_svc.book(current_user, start_ts, end_ts)
     if not result["ok"]:
+        log_activity(current_user, "booking_failed", f"book failed: {result.get('reason','unknown')}")
         if result.get("reason") == "slot_taken":
             raise HTTPException(409, detail=result)
         raise HTTPException(400, detail=result)
     log_audit(current_user, "BOOK_RESERVATION", detail=f"{start_ts}->{end_ts}")
+    log_activity(current_user, "booking", f"{current_user} booked session {result['booking']['id']}")
     return result["booking"]
 
 
@@ -1066,12 +1109,14 @@ def get_active_booking(current_user: str = Depends(require_user)):
 def approve_booking(booking_id: str, current_user: str = Depends(require_admin)):
     result = booking_svc.approve(booking_id)
     if not result["ok"]:
+        log_activity(current_user, "booking_failed", f"approve {booking_id} failed: {result.get('reason','unknown')}")
         if result.get("reason") == "not_found":
             raise HTTPException(404, detail=result)
         if result.get("reason") == "slot_taken":
             raise HTTPException(409, detail=result)
         raise HTTPException(400, detail=result)
     log_audit(current_user, "APPROVE_BOOKING", detail=f"booking {booking_id}")
+    log_activity(current_user, "booking_approved", f"{current_user} approved {booking_id}")
     return result["booking"]
 
 
@@ -1079,10 +1124,12 @@ def approve_booking(booking_id: str, current_user: str = Depends(require_admin))
 def reject_booking(booking_id: str, current_user: str = Depends(require_admin)):
     result = booking_svc.reject(booking_id)
     if not result["ok"]:
+        log_activity(current_user, "booking_failed", f"reject {booking_id} failed: {result.get('reason','unknown')}")
         if result.get("reason") == "not_found":
             raise HTTPException(404, detail=result)
         raise HTTPException(400, detail=result)
     log_audit(current_user, "REJECT_BOOKING", detail=f"booking {booking_id}")
+    log_activity(current_user, "booking_rejected", f"{current_user} rejected {booking_id}")
     return result["booking"]
 
 
@@ -1091,12 +1138,14 @@ def cancel_booking(booking_id: str, current_user: str = Depends(require_user)):
     is_admin = (current_user == "admin" or get_user_role(current_user) == "admin")
     result = booking_svc.cancel(booking_id, current_user, is_admin=is_admin)
     if not result["ok"]:
+        log_activity(current_user, "booking_failed", f"cancel {booking_id} failed: {result.get('reason','unknown')}")
         if result.get("reason") == "not_found":
             raise HTTPException(404, detail=result)
         if result.get("reason") == "not_owner":
             raise HTTPException(403, detail=result)
         raise HTTPException(400, detail=result)
     log_audit(current_user, "CANCEL_BOOKING", detail=f"booking {booking_id}")
+    log_activity(current_user, "booking_cancelled", f"{current_user} cancelled {booking_id}")
     return result["booking"]
 
 
@@ -1359,6 +1408,10 @@ def ran_connect(body: RanConnectRequest, request: Request, current_user: str = D
             log_audit(current_user, "RAN_CONNECT", domain="ran", detail=f"core={core_provider} ran={ran_provider} amf={amf_set}")
         except:
             pass
+        try:
+            log_activity(current_user, "connect", f"{current_user} connected {core_provider} ↔ {ran_provider} ({amf_set})")
+        except:
+            pass
         return {
             "status": "connected" if sctp_estab else "started",
             "core": {
@@ -1455,6 +1508,10 @@ def ran_disconnect(body: RanConnectRequest, request: Request, current_user: str 
         nodeport = core_info.get("nodeport")
         try:
             log_audit(current_user, "RAN_DISCONNECT", domain="ran", detail=f"core={core_provider} ran={ran_provider} unit={unit}")
+        except:
+            pass
+        try:
+            log_activity(current_user, "connect", f"{current_user} disconnected {core_provider} ↔ {ran_provider}")
         except:
             pass
         return {

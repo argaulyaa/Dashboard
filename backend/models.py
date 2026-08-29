@@ -168,6 +168,34 @@ class AuditLogModel(Base):
         }
 
 
+class ActivityLogModel2(Base):
+    """Recent Activity feed — mixed real events for Overview page.
+
+    Persistent in oran_dashboard.db (SQLite / Postgres), same DB as other
+    models. Keep table name `activity_log` (spec) distinct from `audit_logs`.
+    """
+    __tablename__ = "activity_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user = Column(String(64), nullable=False, index=True, default="")
+    action = Column(String(64), nullable=False, index=True)
+    detail = Column(Text, default="", nullable=False)
+    timestamp = Column(Float, default=time.time, nullable=False, index=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user": self.user or "",
+            "action": self.action,
+            "detail": self.detail or "",
+            "timestamp": self.timestamp,
+        }
+
+
+# Alias expected by spec helper name
+ActivityLog = ActivityLogModel2
+
+
 class BookingModel(Base):
     """Reservation booking for Core↔RAN exclusive session.
     One row per booked time slot; only one active booking at a time globally

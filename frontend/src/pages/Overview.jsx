@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import NetworkTopologyMap from "../components/NetworkTopologyMap.jsx";
 import { fetchMe } from "../auth.js";
-
+import { fetchRecentActivity } from "../api.js";
 
 const DOMAIN_META = {
   core: { title: "Core", subtitle: "5G Core network functions", icon: "memory" },
@@ -31,6 +31,35 @@ const ACTIVITY_BG = {
   error: "bg-error-container text-error",
 };
 
+// Spec mapping: booking=lock, connect=bolt, register=person, restart=autorenew
+function activityIcon(action) {
+  const a = (action || "").toLowerCase();
+  if (a.startsWith("booking")) return "lock";
+  if (a.startsWith("connect")) return "bolt";
+  if (a === "register" || a.startsWith("register")) return "person";
+  if (a.startsWith("restart")) return "autorenew";
+  if (a.startsWith("login")) return "login";
+  return "info";
+}
+function activityColor(action) {
+  const a = (action || "").toLowerCase();
+  if (a.startsWith("booking")) return "secondary";
+  if (a.startsWith("connect")) return "tertiary";
+  if (a.startsWith("register")) return "primary";
+  if (a.startsWith("restart")) return "primary";
+  if (a.startsWith("login")) return "secondary";
+  return "primary";
+}
+function formatActivityTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  const diff = Math.max(0, Date.now() / 1000 - ts);
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return d.toLocaleDateString();
+}
+
 function domainUptimeSeconds(components, nowSeconds) {
   if (!components?.length) return null;
   const newestStart = Math.max(...components.map((c) => c.started_at || 0));
@@ -58,31 +87,6 @@ function formatRemaining(seconds) {
   return `${m}m ${s}s`;
 }
 
-function buildActivity(components) {
-  const items = [];
-  components.forEach((c) => {
-    if (c.status === "restarting") {
-      items.push({ id: `${c.domain}-${c.id}-restart`, icon: "autorenew", color: "primary", text: `${c.name} is restarting.` });
-    } else if (c.status === "down") {
-      items.push({ id: `${c.domain}-${c.id}-down`, icon: "error", color: "error", text: `${c.name} is down.` });
-    } else if (c.status === "degraded") {
-      items.push({ id: `${c.domain}-${c.id}-degraded`, icon: "warning", color: "tertiary", text: `${c.name} performance degraded.` });
-    }
-    if (c.reservation) {
-      items.push({
-        id: `${c.domain}-${c.id}-res`,
-        icon: "lock",
-        color: "secondary",
-        text: `${c.name} reserved by ${c.reservation.user}.`,
-      });
-    }
-  });
-  if (items.length === 0) {
-    items.push({ id: "all-clear", icon: "check_circle", color: "secondary", text: "All components running normally." });
-  }
-  return items.slice(0, 5);
-}
-
 function MetricCard({ label, value, icon, color }) {
   return (
     <div className="bg-white p-6 rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] flex items-center justify-between">
@@ -100,8 +104,6 @@ function DomainCard({ domainKey, components, onSelect, nowSeconds }) {
   const health = domainHealth(components);
   const problem = components.find((c) => c.status !== "healthy");
   const uptime = domainUptimeSeconds(components, nowSeconds);
-  // RIC is now live K8s (KubectlRicAdapter ns ric) — no mock domain remains.
-  // Keep isMock only if provider is truly a mock adapter (e.g. desc contains "mock").
   const isMock = false;
 
   return (
@@ -112,7 +114,7 @@ function DomainCard({ domainKey, components, onSelect, nowSeconds }) {
           {HEALTH_LABEL[health]}
         </span>
       </div>
-      <h4 className="font-title-lg text-title-lg mb-1">{meta.title} {isMock && <span className="text-label-sm font-normal text-on-surface-variant border border-outline-variant px-1.5 py-0.5 rounded ml-1 align-middle">mock</span>}</h4>
+      <h4 className="font-title-lg text-title-lg mb-1">{meta.title}</h4>
       <p className="text-body-md text-on-surface-variant mb-4">Uptime: {formatUptime(uptime)}</p>
       <div className="flex flex-col gap-2">
         <Link className="text-primary hover:underline font-label-lg flex items-center gap-1" to={`/${domainKey}`}>
@@ -132,7 +134,6 @@ function DomainCard({ domainKey, components, onSelect, nowSeconds }) {
 }
 
 export default function Overview({ data, currentUser, onSelect, onReservationChange }) {
-  // displayName uses Full Name from /api/auth/me (full_name), fallback to username if empty, never email/Network ID
   const [displayName, setDisplayName] = useState(currentUser || "Admin");
   useEffect(() => {
     let cancelled = false;
@@ -149,10 +150,28 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
     })();
     return () => { cancelled = true; };
   }, [currentUser]);
+
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(t);
+  }, []);
+
+  // Recent Activity feed — real events from /api/activity/recent, poll 30s
+  const [recent, setRecent] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const rows = await fetchRecentActivity(5);
+        if (!cancelled) setRecent(Array.isArray(rows) ? rows : []);
+      } catch {
+        // keep previous value on error (auth may not be ready)
+      }
+    }
+    load();
+    const id = setInterval(load, 30000);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   const allComponents = [
@@ -169,7 +188,6 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
     ? "degraded"
     : "healthy";
   const reservedComponents = allComponents.filter((c) => c.reservation?.active);
-  const activity = buildActivity(allComponents);
   const systemUptime = domainUptimeSeconds(allComponents, now.getTime() / 1000);
 
   const dateLabel = now.toLocaleDateString("en-US", {
@@ -189,7 +207,6 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
 
   return (
     <div>
-      {/* Header & status kesehatan */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
         <div>
           <h2 className="font-headline-lg text-headline-lg text-on-surface mb-1">
@@ -214,14 +231,12 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
         </div>
       </div>
 
-      {/* Metrik ringkas — hanya data nyata, tanpa mock bandwidth/latency */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter mb-8">
         <MetricCard label="Nodes Online" value={`${healthyCount}/${total}`} icon="router" color="text-primary" />
         <MetricCard label="Active Reservations" value={reservedComponents.length} icon="lock" color="text-secondary" />
         <MetricCard label="System Health" value={healthLabel} icon="monitor_heart" color={healthText} />
       </div>
 
-      {/* Grid utama */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-gutter">
         <div className="lg:col-span-8 space-y-gutter">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter">
@@ -240,7 +255,6 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
         </div>
 
         <div className="lg:col-span-4 space-y-gutter">
-          {/* Reservasi aktif */}
           <div className="bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)]">
             <div className="p-6 border-b border-outline-variant flex justify-between items-center">
               <h4 className="font-title-lg text-title-lg">Active Reservations</h4>
@@ -277,7 +291,6 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
                   </div>
                 );
               })}
-              {/* RBAC 2-role: semua role boleh kelola reservasi */}
               {true && (
                 <Link
                   to="/reservations"
@@ -289,22 +302,29 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
             </div>
           </div>
 
-          {/* Aktivitas terbaru */}
           <div className="bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] overflow-hidden">
             <div className="p-6 border-b border-outline-variant">
               <h4 className="font-title-lg text-title-lg">Recent Activity</h4>
             </div>
             <div className="divide-y divide-outline-variant/30">
-              {activity.map((a) => (
-                <div key={a.id} className="p-4 flex gap-3">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${ACTIVITY_BG[a.color]}`}>
-                    <span className="material-symbols-outlined text-[20px]">{a.icon}</span>
+              {recent.length === 0 && (
+                <div className="p-6 text-body-md text-on-surface-variant">No recent activity.</div>
+              )}
+              {recent.map((r) => {
+                const icon = activityIcon(r.action);
+                const color = activityColor(r.action);
+                return (
+                  <div key={r.id} className="p-4 flex gap-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${ACTIVITY_BG[color]}`}>
+                      <span className="material-symbols-outlined text-[20px]">{icon}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-body-md text-on-surface truncate">{r.detail || r.action}</p>
+                      <p className="text-label-sm text-on-surface-variant">{r.user ? `@${r.user}` : ""} {r.user ? "·" : ""} {formatActivityTime(r.timestamp)} · {r.action}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-body-md text-on-surface">{a.text}</p>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

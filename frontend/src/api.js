@@ -248,6 +248,14 @@ export async function fetchAuditLogs() {
   return res.json();
 }
 
+export async function fetchRecentActivity(limit = 5) {
+  const res = await fetch(`${BASE}/activity/recent?limit=${encodeURIComponent(limit)}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to fetch recent activity: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchComponentLogs(domain, compId, provider = null, tail = 100) {
   const qs = provider ? `?provider=${encodeURIComponent(provider)}&tail=${tail}` : `?tail=${tail}`;
   const res = await fetch(`${BASE}/${domain}/components/${compId}/logs${qs}`, {
