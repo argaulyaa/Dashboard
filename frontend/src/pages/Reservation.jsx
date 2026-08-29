@@ -52,6 +52,7 @@ export default function ReservationPage({ currentUser }) {
   const [err, setErr] = useState("");
   const [okMsg, setOkMsg] = useState("");
   const [loading, setLoading] = useState(false);
+  const [adminFilter, setAdminFilter] = useState("active");
 
   const load = async () => {
     try {
@@ -89,6 +90,24 @@ export default function ReservationPage({ currentUser }) {
     if (!activeBooking) return 0;
     return Math.max(0, Math.floor(activeBooking.end_at * 1000 - now) / 1000);
   }, [activeBooking, now]);
+
+  // #8 admin filter tabs derived counts + filtered list
+  const adminCounts = useMemo(() => {
+    const c = { active: 0, upcoming: 0, done: 0 };
+    allBookings.forEach((b) => {
+      if (b.status === "active") c.active += 1;
+      else if (b.status === "pending") c.upcoming += 1;
+      else if (["done", "cancelled", "rejected"].includes(b.status)) c.done += 1;
+    });
+    return c;
+  }, [allBookings]);
+
+  const filteredAllBookings = useMemo(() => {
+    if (adminFilter === "active") return allBookings.filter((b) => b.status === "active");
+    if (adminFilter === "upcoming") return allBookings.filter((b) => b.status === "pending");
+    if (adminFilter === "done") return allBookings.filter((b) => ["done", "cancelled", "rejected"].includes(b.status));
+    return allBookings;
+  }, [allBookings, adminFilter]);
 
   const handleBook = async (e) => {
     e.preventDefault();
@@ -201,12 +220,29 @@ export default function ReservationPage({ currentUser }) {
         )}
       </div>
 
-      {/* Admin view — user + time only */}
+      {/* Admin view — user + time only, filter tabs active/upcoming/done, 1-click Approve/Reject */}
       {isAdmin && (
         <div className="bg-white rounded-xl border border-outline-variant shadow-sm p-6">
           <h3 className="font-title-md text-title-md mb-4">All Bookings (Admin)</h3>
+          <div className="flex gap-1 border-b border-outline-variant mb-4">
+            {[
+              { key: "active", label: "Active" },
+              { key: "upcoming", label: "Upcoming" },
+              { key: "done", label: "Done" },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setAdminFilter(tab.key)}
+                className={`px-4 py-2 text-sm font-bold border-b-2 -mb-px transition-colors ${adminFilter === tab.key ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
+              >
+                {tab.label} ({adminCounts[tab.key]})
+              </button>
+            ))}
+          </div>
           {allBookings.length === 0 ? (
             <p className="text-sm text-on-surface-variant py-4 text-center">No bookings.</p>
+          ) : filteredAllBookings.length === 0 ? (
+            <p className="text-sm text-on-surface-variant py-4 text-center">No {adminFilter} bookings.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
@@ -214,17 +250,17 @@ export default function ReservationPage({ currentUser }) {
                   <tr><th className="px-4 py-2">User</th><th className="px-4 py-2">Start → End</th><th className="px-4 py-2">Status</th><th className="px-4 py-2 text-right">Actions</th></tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant">
-                  {allBookings.map((b) => (
+                  {filteredAllBookings.map((b) => (
                     <tr key={b.id}>
                       <td className="px-4 py-2 font-bold">{b.user}</td>
                       <td className="px-4 py-2 text-xs">{formatTime(b.start_at)} → {formatTime(b.end_at)}</td>
                       <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs border font-bold ${statusBadge(b.status)}`}>{b.status}</span></td>
                       <td className="px-4 py-2 text-right space-x-2">
                         {b.status === "pending" && <>
-                          <button onClick={() => handleApprove(b.id)} className="px-3 py-1 bg-emerald-600 text-white rounded-lg text-xs font-bold">Approve</button>
-                          <button onClick={() => handleReject(b.id)} className="px-3 py-1 bg-red-600 text-white rounded-lg text-xs font-bold">Reject</button>
+                          <button onClick={() => handleApprove(b.id)} className="px-3 py-1 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700">Approve</button>
+                          <button onClick={() => handleReject(b.id)} className="px-3 py-1 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700">Reject</button>
                         </>}
-                        {(b.status === "pending" || b.status === "active") && <button onClick={() => handleCancel(b.id)} className="px-3 py-1 border rounded-lg text-xs font-bold">Cancel</button>}
+                        {(b.status === "pending" || b.status === "active") && <button onClick={() => handleCancel(b.id)} className="px-3 py-1 border rounded-lg text-xs font-bold hover:bg-surface-container">Cancel</button>}
                       </td>
                     </tr>
                   ))}
