@@ -88,8 +88,8 @@ export default function NetworkTopologyMap({ core, ran, ric }) {
     <div className="bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] overflow-hidden">
       <div className="p-6 border-b border-outline-variant flex justify-between items-center flex-wrap gap-2">
         <div>
-          <h4 className="font-title-lg text-title-lg">Network Topology <span className="ml-2 text-label-sm font-normal text-on-surface-variant border border-outline-variant px-1.5 py-0.5 rounded align-middle">Mock topology — illustrative</span><span className={`ml-2 text-[11px] font-bold border px-2 py-0.5 rounded-full align-middle ${SCTP_BADGE_CLASS}`}>{SCTP_LABEL}</span></h4>
-          <p className="text-body-md text-on-surface-variant">Schematic CORE–RAN–RIC links (not to scale; health colors are real) — CORE–RAN line <span style={{color: CORE_RAN_COLOR, fontWeight: 700}}>{sctpEstab===true?"green ESTAB":sctpEstab===false?"red DOWN":"grey unknown"}</span> reflects real SCTP</p>
+          <h4 className="font-title-lg text-title-lg">Network Topology <span className={`ml-2 text-[11px] font-bold border px-2 py-0.5 rounded-full align-middle ${SCTP_BADGE_CLASS}`}>{SCTP_LABEL}</span></h4>
+          <p className="text-body-md text-on-surface-variant">Live schematic CORE–RAN–RIC links (health colors & uptime are real — RIC via K8s ns ric) — CORE–RAN line <span style={{color: CORE_RAN_COLOR, fontWeight: 700}}>{sctpEstab===true?"green ESTAB":sctpEstab===false?"red DOWN":"grey unknown"}</span> reflects real SCTP</p>
         </div>
         <div className="flex gap-2">
           <button className="px-3 py-1 bg-surface-container text-on-surface rounded-lg font-label-lg hover:bg-surface-container-high transition-colors">
