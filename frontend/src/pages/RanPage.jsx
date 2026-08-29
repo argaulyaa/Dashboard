@@ -288,23 +288,6 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
               </span>
             </div>
 
-            {/* F3: status core yang sedang aktif (dari meta WS v2) — chip di hero.
-                Fase 3 (B4) akan menambah binding N2 per-RAN di meta.bindings;
-                untuk sekarang tampilkan saja core eksplisit yang aktif. */}
-            <div className="px-6 pb-4 -mt-1">
-              {hasCoreData && activeCoreKey ? (
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full bg-secondary-container text-on-secondary-container">
-                  <span className="w-1.5 h-1.5 rounded-full bg-secondary" />
-                  Core aktif: {providerLabel(activeCoreKey)}
-                </span>
-              ) : hasCoreData ? (
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full bg-surface-container text-on-surface-variant">
-                  <span className="w-1.5 h-1.5 rounded-full bg-outline" />
-                  Tidak ada core aktif — aktifkan dulu di halaman Core
-                </span>
-              ) : null}
-            </div>
-
             {/* Hero metrics: ONLY real testbed data for ALL providers (38145cc extended to srsran) — Architecture CU/DU, Interface F1-C/U, Throughput mock removed */}
             <div className="p-6 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-6">
                 <div className="space-y-6">
