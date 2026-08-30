@@ -43,6 +43,17 @@ function formatUptime(seconds) {
   return `${d}d ${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m`;
 }
 
+// Strip raw ss ESTAB IP:port noise from Core detail (e.g. "ESTAB 0 0 10.91.2.152:37713 ..." / "%enp1s0")
+function cleanCoreDetail(detail) {
+  if (!detail || typeof detail !== "string") return detail || "-";
+  if (!detail.includes("ESTAB") && !detail.includes("%enp")) return detail;
+  const parts = detail.split(" • ").filter((seg) => !seg.includes("ESTAB") && !seg.includes("%enp"));
+  let cleaned = parts.join(" • ");
+  cleaned = cleaned.replace(/ESTAB[^•|]*/g, "").replace(/\|\s*/g, " • ").replace(/•\s*•/g, "•").trim();
+  cleaned = cleaned.replace(/^\s*•\s*|\s*•\s*$/g, "").trim();
+  return cleaned || detail.split(" • ").filter((seg) => !seg.includes("ESTAB")).join(" • ").trim() || "-";
+}
+
 export default function CorePage({ components, currentUser, onSelect, onRestart, telemetryMeta }) {
   // Daftar provider datang dari backend (GET /api/core/providers), bukan
   // ditulis manual di sini. Kalau backend nambah provider baru, tab baru
@@ -192,7 +203,9 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
   };
 
   const activeMeta = providers.find((p) => p.key === activeProvider);
-  const displayedComponents = isDefaultProvider ? components : (providerComponents || []);
+  const _rawComponents = isDefaultProvider ? components : (providerComponents || []);
+  // Sanitize Core detail: strip raw ss ESTAB IP:port noise (keep host/cpu/mem untouched)
+  const displayedComponents = useMemo(() => _rawComponents.map((c) => ({ ...c, detail: cleanCoreDetail(c.detail) })), [_rawComponents]);
 
   // "Hero" component = AMF, dipakai mewakili instance Core secara keseluruhan
   // (lihat komentar di backend/adapters.py: host di AMF = host instance Core).

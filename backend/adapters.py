@@ -823,12 +823,15 @@ class KubectlOaiCoreAdapter:
                 detail_bits.append(f"N2 endpoint svc/amf {svcs['amf']}")
             elif ep and ep != "None":
                 detail_bits.append(f"svc {comp_id} {ep}")
+            # Sanitize: strip any raw ss/ESTAB IP:port noise if it leaks into detail
+            detail_str = " • ".join(detail_bits)
+            detail_str = self._strip_estab(detail_str)
             self._cache[comp_id] = {
                 "id": comp_id,
                 "name": comp_id.upper(),
                 "kind": CORE_KIND_LABELS.get(comp_id, comp_id.upper()),
                 "status": status,
-                "detail": " • ".join(detail_bits),
+                "detail": detail_str,
                 "host": info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else self._ssh["host"],
                 "cpu_pct": met.get("cpu_pct", 0.0),
                 "mem_gb": round(met.get("mem_mi", 0.0) / 1024.0, 2),
@@ -841,6 +844,20 @@ class KubectlOaiCoreAdapter:
                 "uptime_seconds": (time.time() - started_at) if started_at else 0,
                 "started_at": started_at or time.time(),
             }
+
+    @staticmethod
+    def _strip_estab(detail: str) -> str:
+        """Remove raw ss ESTAB IP:port fragments from detail (e.g. 'ESTAB 0 0 10.91.2.152:37713 ...', '%enp1s0')."""
+        import re
+        if not detail or "ESTAB" not in detail:
+            return detail
+        parts = [p for p in detail.split(" • ") if "ESTAB" not in p and "%enp" not in p]
+        cleaned = " • ".join(parts)
+        cleaned = re.sub(r'ESTAB[^•|]*', '', cleaned)
+        cleaned = re.sub(r'\|\s*', ' • ', cleaned)
+        cleaned = re.sub(r'•\s*•', '•', cleaned)
+        cleaned = re.sub(r'^\s*•\s*|\s*•\s*$', '', cleaned).strip()
+        return cleaned.strip() or detail.split(" • ")[0]
 
     @staticmethod
     def _map_k8s_status(phase: str, restarts: str = "0") -> Status:
@@ -1148,6 +1165,9 @@ class KubectlOpen5gsCoreAdapter:
                 detail_bits.append(f"N2 endpoint svc/amf {svcs['amf']}")
             elif ep and ep != "None":
                 detail_bits.append(f"svc {comp_id} {ep}")
+            # Sanitize: strip any raw ss/ESTAB IP:port noise if it leaks into detail
+            detail_str = " • ".join(detail_bits)
+            detail_str = self._strip_estab(detail_str)
             # host = pod IP (real), fallback to SSH host if pod IP empty (e.g. pending)
             host_val = info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else self._ssh["host"]
             self._cache[comp_id] = {
@@ -1155,7 +1175,7 @@ class KubectlOpen5gsCoreAdapter:
                 "name": comp_id.upper(),
                 "kind": CORE_KIND_LABELS.get(comp_id, comp_id.upper()),
                 "status": status,
-                "detail": " • ".join(detail_bits),
+                "detail": detail_str,
                 "host": host_val,
                 "cpu_pct": met.get("cpu_pct", 0.0),
                 "mem_gb": round(met.get("mem_mi", 0.0) / 1024.0, 2),
@@ -1168,6 +1188,20 @@ class KubectlOpen5gsCoreAdapter:
                 "uptime_seconds": (time.time() - started_at) if started_at else 0,
                 "started_at": started_at or time.time(),
             }
+
+    @staticmethod
+    def _strip_estab(detail: str) -> str:
+        """Remove raw ss ESTAB IP:port fragments from detail (e.g. 'ESTAB 0 0 10.91.2.152:37713 ...', '%enp1s0')."""
+        import re
+        if not detail or "ESTAB" not in detail:
+            return detail
+        parts = [p for p in detail.split(" • ") if "ESTAB" not in p and "%enp" not in p]
+        cleaned = " • ".join(parts)
+        cleaned = re.sub(r'ESTAB[^•|]*', '', cleaned)
+        cleaned = re.sub(r'\|\s*', ' • ', cleaned)
+        cleaned = re.sub(r'•\s*•', '•', cleaned)
+        cleaned = re.sub(r'^\s*•\s*|\s*•\s*$', '', cleaned).strip()
+        return cleaned.strip() or detail.split(" • ")[0]
 
     @staticmethod
     def _map_k8s_status(phase: str, restarts: str = "0") -> Status:
@@ -2397,9 +2431,7 @@ def _build_core_providers() -> dict:
                 kubeconfig=os.environ.get(
                     "OAI_K8S_ADMIN_CONF", "/etc/kubernetes/admin.conf"),
             )
-            oai_desc = ("OpenAirInterface 5G Core — live dari Kubernetes "
-                        f"(ns {os.environ.get('OAI_K8S_NAMESPACE', '5g-core')} "
-                        f"via kubectl@{oai_k8s_host})")
+            oai_desc = "OpenAirInterface 5G Core"
         except Exception:
             adapter = CoreAdapter()
             oai_desc = "OpenAirInterface 5G Core (fallback mock — env K8s invalid)"
@@ -2493,7 +2525,7 @@ def _build_core_providers() -> dict:
                 namespace=open5gs_ns,
                 kubeconfig=open5gs_kubeconf,
             )
-            open5gs_desc = f"open5gs 5G Core — live dari Kubernetes (ns {open5gs_ns} via kubectl@{open5gs_k8s_host})"
+            open5gs_desc = "open5gs 5G Core"
         except Exception as e:
             print(f"[open5gs K8s] fallback mock due to {e}", flush=True)
             adapter_5gs = CoreAdapter()
