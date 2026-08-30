@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import NetworkTopologyMap from "../components/NetworkTopologyMap.jsx";
 import { fetchMe } from "../auth.js";
 import { fetchRecentActivity } from "../api.js";
 
@@ -250,8 +249,6 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
               />
             ))}
           </div>
-
-          <NetworkTopologyMap core={data.core} ran={data.ran} ric={data.ric} />
         </div>
 
         <div className="lg:col-span-4 space-y-gutter">
