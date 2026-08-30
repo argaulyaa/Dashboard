@@ -151,13 +151,14 @@ export default function NetworkTopologyMap({ core, ran, ric }) {
 
   const isActivePair = (coreKey, ranKey) => activeCoreResolved === coreKey && activeRan === ranKey && sctpEstab;
 
-  // positions
+  // positions — REAL O-RAN spec: Core left → RAN center → RIC right (triangular)
+  // Core stacked vertical on left, gNB stacked vertical in center, RIC single on right
   const POS = {
-    "core-oai": { x: 180, y: 72 },
-    "core-open5gs": { x: 620, y: 72 },
-    "ric": { x: 400, y: 188 },
-    "ran-oai": { x: 180, y: 360 },
-    "ran-srsran": { x: 620, y: 360 },
+    "core-oai": { x: 150, y: 92 },
+    "core-open5gs": { x: 150, y: 292 },
+    "ran-oai": { x: 400, y: 92 },
+    "ran-srsran": { x: 400, y: 292 },
+    "ric": { x: 650, y: 192 },
   };
 
   function NodeCard({ id, label, sub, icon }) {
@@ -211,23 +212,37 @@ export default function NetworkTopologyMap({ core, ran, ric }) {
   function Link({ from, to, active, label, kind }) {
     const a = POS[from];
     const b = POS[to];
-    // curved path
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
-    // add slight curve for diagonal links
+    // triangular layout: Core left → RAN center → RIC right
+    // N2: horizontal if same Y, diagonal/S-curve otherwise
+    // E2: RIC (right) → gNB (center) diagonal
     const dx = b.x - a.x;
-    const isVertical = Math.abs(dx) < 10;
+    const dy = b.y - a.y;
+    const isHorizontal = Math.abs(dy) < 12;
+    const isSameCol = Math.abs(dx) < 10; // legacy vertical case (not used now)
     let d;
-    if (isVertical) {
+    // card half-width ≈64, half-height≈36 — offset from edge instead of center
+    if (isHorizontal) {
+      // straight horizontal with gentle curve
+      const sx = a.x + (dx > 0 ? 64 : -64);
+      const ex = b.x + (dx > 0 ? -64 : 64);
+      const mx = (sx + ex) / 2;
+      d = `M ${sx} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${ex} ${b.y}`;
+    } else if (isSameCol) {
       d = `M ${a.x} ${a.y + 36} C ${a.x} ${a.y + 90}, ${b.x} ${b.y - 90}, ${b.x} ${b.y - 36}`;
     } else {
-      // diagonal with gentle S
-      const c1x = a.x + (b.x > a.x ? 80 : -80);
-      const c1y = a.y + 70;
-      const c2x = b.x + (b.x > a.x ? -80 : 80);
-      const c2y = b.y - 70;
-      d = `M ${a.x} ${a.y + 36} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${b.x} ${b.y - 36}`;
+      // diagonal with gentle S — horizontal control points
+      const sx = a.x + (dx > 0 ? 64 : -64);
+      const sy = a.y;
+      const ex = b.x + (dx > 0 ? -64 : 64);
+      const ey = b.y;
+      const c1x = sx + dx * 0.35;
+      const c1y = sy + dy * 0.15;
+      const c2x = ex - dx * 0.35;
+      const c2y = ey - dy * 0.15;
+      d = `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${ex} ${ey}`;
     }
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
     const stroke = active
       ? (kind === "e2" ? "#22d3ee" : "#22c55e")
       : "#475569";
@@ -251,7 +266,7 @@ export default function NetworkTopologyMap({ core, ran, ric }) {
         {/* invisible path for motion */}
         <path id={`path-${from}-${to}`} d={d} fill="none" stroke="none" />
         {/* label */}
-        <g transform={`translate(${mx},${my - (isVertical ? 10 : 6)})`}>
+        <g transform={`translate(${mx},${my - (isHorizontal ? 6 : 10)})`}>
           <rect x="-22" y="-9" width="44" height="14" rx="7" fill={active ? (kind === "e2" ? "#0e7490" : "#14532d") : "#1e293b"} opacity={active ? 0.98 : 0.85} stroke={active ? stroke : "#334155"} strokeWidth="0.9" />
           <text textAnchor="middle" y="2" fill={active ? "white" : "#94a3b8"} fontFamily="Inter" fontSize="7.5" fontWeight="800" letterSpacing="0.5">{label}</text>
         </g>
@@ -286,7 +301,7 @@ export default function NetworkTopologyMap({ core, ran, ric }) {
             )}
           </h4>
           <p className="text-body-md text-on-surface-variant mt-1">
-            2 Core · 2 gNB · 1 RIC — <span style={{ color: sctpEstab ? "#16a34a" : "#64748b", fontWeight: 700 }}>{sctpEstab ? "green solid = active N2" : "grey dashed = idle"}</span> · E2 <span style={{ color: ricHealthy ? "#0891b2" : "#64748b", fontWeight: 700 }}>{ricHealthy ? "cyan = FlexRIC healthy" : "grey = RIC down"}</span> — health colors are real
+            Core (left: 2) — N2 SCTP 38412 — RAN (center: 2) — E2 36421 — RIC (right: 1) · <span style={{ color: sctpEstab ? "#16a34a" : "#64748b", fontWeight: 700 }}>{sctpEstab ? "green solid+dot = SCTP ESTAB N2" : "grey dashed = N2 idle"}</span> · E2 <span style={{ color: ricHealthy ? "#0891b2" : "#64748b", fontWeight: 700 }}>{ricHealthy ? "cyan solid+dot = E2 healthy" : "grey dashed = RIC down"}</span> — health real dari API
           </p>
         </div>
         <button onClick={loadAll} className="shrink-0 px-3.5 py-1.5 bg-slate-900 text-white rounded-full font-label-lg hover:bg-slate-800 transition-colors text-[13px] flex items-center gap-1.5">
@@ -319,10 +334,10 @@ export default function NetworkTopologyMap({ core, ran, ric }) {
 
           {/* Nodes */}
           <NodeCard id="core-oai" label="OAI 5GC" sub="5g-core · N2 38412" icon="cloud" />
-          <NodeCard id="core-open5gs" label="open5gs" sub="open5gs-chart · N2 32112" icon="dns" />
+          <NodeCard id="core-open5gs" label="open5gs" sub="open5gs-chart · N2 38412" icon="dns" />
           <NodeCard id="ric" label="FlexRIC" sub="nearRT-RIC · E2 36421" icon="hub" />
-          <NodeCard id="ran-oai" label="OAI gNB" sub="nr-softmodem" icon="cell_tower" />
-          <NodeCard id="ran-srsran" label="srsRAN" sub="srsGNB · gnb" icon="settings_input_antenna" />
+          <NodeCard id="ran-oai" label="OAI gNB" sub="nr-softmodem · N2 38412" icon="cell_tower" />
+          <NodeCard id="ran-srsran" label="srsRAN" sub="srsGNB · N2 38412" icon="settings_input_antenna" />
         </svg>
 
         {/* tooltip */}
