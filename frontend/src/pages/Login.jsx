@@ -310,18 +310,6 @@ export default function Login({ onLoginSuccess }) {
               </p>
             </div>
           </form>
-
-          <div className="mt-8 pt-8 border-t border-outline-variant flex flex-col gap-4 text-center">
-            <p className="text-sm text-on-surface-variant">Internal Access Only</p>
-            <div className="flex justify-center items-center gap-6">
-              <a className="text-xs text-outline hover:text-primary transition-colors flex items-center gap-1" href="#">
-                <span className="material-symbols-outlined text-sm">support_agent</span> Help Desk
-              </a>
-              <a className="text-xs text-outline hover:text-primary transition-colors flex items-center gap-1" href="#">
-                <span className="material-symbols-outlined text-sm">gavel</span> Policy
-              </a>
-            </div>
-          </div>
         </div>
 
         <div className="mt-8 flex justify-center items-center gap-2 opacity-40 select-none grayscale">
