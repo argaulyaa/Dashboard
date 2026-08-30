@@ -29,13 +29,6 @@ const STATUS_PILL = {
   restarting: "bg-primary-container text-white",
 };
 
-const RAN_NODE_RING = {
-  healthy: "border-primary",
-  degraded: "border-tertiary",
-  down: "border-outline opacity-60",
-  restarting: "border-primary animate-pulse",
-};
-
 const RAN_NODE_TEXT = {
   healthy: "text-secondary",
   degraded: "text-tertiary",
@@ -49,6 +42,7 @@ function formatClock(ts) {
 }
 
 export default function RicPage({ components, ranComponents = [], currentUser, onSelect, onRestart }) {
+  void ranComponents; // topology removed — param retained for compatibility
   const [providers, setProviders] = useState([]);
   const [activeProvider, setActiveProvider] = useState(null);
   const [providerComponents, setProviderComponents] = useState(null);
@@ -281,54 +275,56 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
           </div>
         </div>
 
-        {/* E2 Node Topology */}
-        <div className="col-span-12 lg:col-span-7 bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-[0_4px_12px_rgba(0,0,0,0.06)] min-h-[400px] flex flex-col">
-          <div className="mb-6">
-            <h3 className="text-title-md font-title-md">E2 Node Topology</h3>
-            <p className="text-xs text-on-surface-variant">Connected Radio Nodes and Service Models</p>
+        {/* All RIC Components — LEFT (col-span-7) */}
+        <div className="col-span-12 lg:col-span-7 bg-surface-container-lowest border border-outline-variant rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] overflow-hidden flex flex-col">
+          <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center">
+            <h4 className="text-sm font-bold">All RIC Components</h4>
+            <span className="text-xs bg-surface-container px-2 py-1 rounded">
+              {components.filter((c) => c.status !== "down").length} / {components.length} healthy
+            </span>
           </div>
-          <div className="flex-1 relative bg-surface-container/30 rounded-lg overflow-hidden border border-outline-variant/30 flex items-center justify-center">
-            <div className="absolute inset-0 pointer-events-none opacity-20">
-              <div
-                className="absolute top-0 left-0 w-full h-full"
-                style={{ backgroundImage: "radial-gradient(#0c56d0 1px, transparent 1px)", backgroundSize: "20px 20px" }}
-              />
-            </div>
-            <div className="relative flex flex-col items-center gap-16">
-              <div className="relative">
-                <div className="w-24 h-24 bg-primary text-white rounded-2xl flex flex-col items-center justify-center shadow-lg z-10 relative">
-                  <span className="material-symbols-outlined text-3xl">hub</span>
-                  <span className="text-[10px] font-bold mt-1">RIC</span>
-                </div>
-                <div className="absolute inset-0 bg-primary/20 rounded-2xl animate-ping" />
-              </div>
-              <div className="flex gap-12 flex-wrap justify-center">
-                {ranComponents.length === 0 && (
-                  <p className="text-xs text-on-surface-variant">No RAN nodes available.</p>
-                )}
-                {ranComponents.map((n) => (
-                  <div key={n.id} className="flex flex-col items-center gap-3">
-                    <div
-                      className={`w-16 h-16 bg-surface-container-highest border-2 rounded-full flex items-center justify-center shadow ${
-                        RAN_NODE_RING[n.status] ?? "border-outline"
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-primary">settings_input_antenna</span>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-xs font-bold">{n.name}</p>
-                      <p className={`text-[10px] font-bold ${RAN_NODE_TEXT[n.status] ?? "text-on-surface-variant"}`}>
-                        {(STATUS_LABEL[n.status] ?? n.status).toUpperCase()}
-                      </p>
-                    </div>
-                  </div>
+          <div className="overflow-x-auto flex-1">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-surface-container-low text-[11px] uppercase tracking-wider font-bold text-on-surface-variant">
+                  <th className="px-6 py-3">Component Name</th>
+                  <th className="px-6 py-3">Status</th>
+                  <th className="px-6 py-3">Details</th>
+                  <th className="px-6 py-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="text-sm divide-y divide-outline-variant">
+                {components.map((c) => (
+                  <tr key={c.id} className="hover:bg-surface-container-low">
+                    <td className="px-6 py-4 font-medium cursor-pointer" onClick={() => onSelect(c)}>
+                      {c.name} <span className="text-on-surface-variant font-normal">({c.kind})</span>
+                      {c.reservation && (
+                        <span className="ml-1.5 text-xs" title={`Reserved by ${c.reservation.user}`}>
+                          🔒
+                        </span>
+                      )}
+                    </td>
+                    <td className={`px-6 py-4 text-xs font-bold ${RAN_NODE_TEXT[c.status] ?? "text-on-surface-variant"}`}>
+                      ● {STATUS_LABEL[c.status] ?? c.status}
+                    </td>
+                    <td className="px-6 py-4 text-xs text-on-surface-variant">{c.detail || "-"}</td>
+                    <td className="px-6 py-4 text-right">
+                      <button
+                        className="text-primary hover:underline font-bold text-xs disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed"
+                        onClick={() => handleRestartRow(c.id)}
+                        disabled={restartingId === c.id || c.status === "restarting"}
+                      >
+                        {restartingId === c.id || c.status === "restarting" ? "Restarting..." : "Restart"}
+                      </button>
+                    </td>
+                  </tr>
                 ))}
-              </div>
-            </div>
+              </tbody>
+            </table>
           </div>
         </div>
 
-        {/* Service Models */}
+        {/* Registered Service Models — RIGHT (col-span-5) */}
         <div className="col-span-12 lg:col-span-5 bg-surface-container-lowest border border-outline-variant rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] flex flex-col">
           <div className="p-4 border-b border-outline-variant">
             <h3 className="text-title-md font-title-md">Registered Service Models</h3>
@@ -361,52 +357,6 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
           </div>
         </div>
 
-        {/* Full xApp / Component Table */}
-        <div className="col-span-12 bg-surface-container-lowest border border-outline-variant rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] overflow-hidden">
-          <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center">
-            <h4 className="text-sm font-bold">All RIC Components</h4>
-            <span className="text-xs bg-surface-container px-2 py-1 rounded">
-              {components.filter((c) => c.status !== "down").length} / {components.length} healthy
-            </span>
-          </div>
-          <table className="w-full text-left">
-            <thead>
-              <tr className="bg-surface-container-low text-[11px] uppercase tracking-wider font-bold text-on-surface-variant">
-                <th className="px-6 py-3">Component Name</th>
-                <th className="px-6 py-3">Status</th>
-                <th className="px-6 py-3">Details</th>
-                <th className="px-6 py-3 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="text-sm divide-y divide-outline-variant">
-              {components.map((c) => (
-                <tr key={c.id} className="hover:bg-surface-container-low">
-                  <td className="px-6 py-4 font-medium cursor-pointer" onClick={() => onSelect(c)}>
-                    {c.name} <span className="text-on-surface-variant font-normal">({c.kind})</span>
-                    {c.reservation && (
-                      <span className="ml-1.5 text-xs" title={`Reserved by ${c.reservation.user}`}>
-                        🔒
-                      </span>
-                    )}
-                  </td>
-                  <td className={`px-6 py-4 text-xs font-bold ${RAN_NODE_TEXT[c.status] ?? "text-on-surface-variant"}`}>
-                    ● {STATUS_LABEL[c.status] ?? c.status}
-                  </td>
-                  <td className="px-6 py-4 text-xs text-on-surface-variant">{c.detail || "-"}</td>
-                  <td className="px-6 py-4 text-right">
-                    <button
-                      className="text-primary hover:underline font-bold text-xs disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed"
-                      onClick={() => handleRestartRow(c.id)}
-                      disabled={restartingId === c.id || c.status === "restarting"}
-                    >
-                      {restartingId === c.id || c.status === "restarting" ? "Restarting..." : "Restart"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
       </div>
       )}
     </div>
