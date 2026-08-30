@@ -237,7 +237,7 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-gutter">
-        <div className="lg:col-span-8 space-y-gutter">
+        <div className="lg:col-span-8">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter">
             {Object.keys(DOMAIN_META).map((key) => (
               <DomainCard
@@ -251,7 +251,7 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
           </div>
         </div>
 
-        <div className="lg:col-span-4 space-y-gutter">
+        <div className="lg:col-span-4">
           <div className="bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)]">
             <div className="p-6 border-b border-outline-variant flex justify-between items-center">
               <h4 className="font-title-lg text-title-lg">Active Reservations</h4>
@@ -299,29 +299,35 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
             </div>
           </div>
 
-          <div className="bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] overflow-hidden">
-            <div className="p-6 border-b border-outline-variant">
-              <h4 className="font-title-lg text-title-lg">Recent Activity</h4>
-            </div>
-            <div className="divide-y divide-outline-variant/30">
-              {recent.length === 0 && (
-                <div className="p-6 text-body-md text-on-surface-variant">No recent activity.</div>
-              )}
-              {recent.map((r) => {
-                const icon = activityIcon(r.action);
-                const color = activityColor(r.action);
-                return (
-                  <div key={r.id} className="p-4 flex gap-3">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${ACTIVITY_BG[color]}`}>
-                      <span className="material-symbols-outlined text-[20px]">{icon}</span>
+        </div>
+
+        {/* Recent Activity — full-width row spanning left to right */}
+        <div className="col-span-12">
+          <div className="grid grid-cols-1">
+            <div className="bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] overflow-hidden">
+              <div className="p-6 border-b border-outline-variant">
+                <h4 className="font-title-lg text-title-lg">Recent Activity</h4>
+              </div>
+              <div className="divide-y divide-outline-variant/30">
+                {recent.length === 0 && (
+                  <div className="p-6 text-body-md text-on-surface-variant">No recent activity.</div>
+                )}
+                {recent.map((r) => {
+                  const icon = activityIcon(r.action);
+                  const color = activityColor(r.action);
+                  return (
+                    <div key={r.id} className="p-4 flex gap-3">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${ACTIVITY_BG[color]}`}>
+                        <span className="material-symbols-outlined text-[20px]">{icon}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-body-md text-on-surface truncate">{r.detail || r.action}</p>
+                        <p className="text-label-sm text-on-surface-variant">{r.user ? `@${r.user}` : ""} {r.user ? "·" : ""} {formatActivityTime(r.timestamp)} · {r.action}</p>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-body-md text-on-surface truncate">{r.detail || r.action}</p>
-                      <p className="text-label-sm text-on-surface-variant">{r.user ? `@${r.user}` : ""} {r.user ? "·" : ""} {formatActivityTime(r.timestamp)} · {r.action}</p>
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
