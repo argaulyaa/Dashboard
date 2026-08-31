@@ -119,7 +119,7 @@ function DomainCard({ domainKey, components, onSelect, nowSeconds }) {
         <Link className="text-primary hover:underline font-label-lg flex items-center gap-1" to={`/${domainKey}`}>
           View all components <span className="material-symbols-outlined text-[16px]">chevron_right</span>
         </Link>
-        {problem && (
+        {problem && domainKey === "ran" && (
           <button
             className="text-left bg-transparent text-primary hover:underline font-label-lg flex items-center gap-1"
             onClick={() => onSelect(domainKey, problem)}
