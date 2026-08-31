@@ -155,8 +155,23 @@ def ran_status_snapshot():
         a, rem = split_marker(rem, "__S5__")
         parts["srs_amf_raw"] = a.strip()
         parts["oai_amf_raw"] = rem.split("__END__")[0].strip() if "__END__" in rem else rem.strip()
-        sctp_estab = parts["sctp_raw"].count("ESTAB") if parts["sctp_raw"] else 0
-        sctp_lines = [l.strip() for l in parts["sctp_raw"].splitlines() if l.strip()]
+        # Dedupe SCTP ESTAB associations: filter %enp1s0 etc to unique associations
+        # ss output may show duplicate due to %iface suffix; normalize and uniq
+        import re as _re2
+        _estab_raw = [l for l in parts["sctp_raw"].splitlines() if "ESTAB" in l] if parts["sctp_raw"] else []
+        def _norm_sctp(l):
+            # remove %iface suffix (e.g. %enp1s0), collapse whitespace and trim
+            n = _re2.sub(r'%\w+', '', l)
+            n = _re2.sub(r'\s+', ' ', n).strip()
+            return n
+        _seen = {}
+        for _ln in _estab_raw:
+            _n = _norm_sctp(_ln)
+            if _n not in _seen:
+                _seen[_n] = _ln.strip()
+        sctp_estab = len(_seen)
+        # keep deduped unique lines for display; preserve original stripped form
+        sctp_lines = list(_seen.values())
         return {
             "srsgnb_active": parts["srs_active"].strip(),
             "oai_gnb_active": parts["oai_active"].strip(),

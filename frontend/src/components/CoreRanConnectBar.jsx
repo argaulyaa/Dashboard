@@ -2,6 +2,42 @@ import React, { useEffect, useState, useMemo } from "react";
 import { fetchProviders, fetchRanStatus, connectRan, disconnectRan, fetchActiveBooking } from "../api.js";
 import { getRole } from "../user.js";
 
+// Friendly labels — user-friendly, no confusing raw chart/ns duplication
+function friendlyCore(key, providers) {
+  if (!key) return null;
+  const found = providers?.find((p) => p.key === key);
+  if (found?.label) {
+    // Use label but clean duplication: e.g. "open5GS (open5gs-chart)" -> keep as is only if key != ns
+    // For display pair we prefer short friendly
+    const k = String(key).toLowerCase();
+    if (k.includes("open5gs")) return "open5GS";
+    if (k === "oai") return "OAI 5GC";
+    return found.label.replace(/\s*\(.*\)\s*$/, "").trim() || key;
+  }
+  const k = String(key).toLowerCase();
+  if (k.includes("open5gs")) return "open5GS";
+  if (k === "oai") return "OAI 5GC";
+  return key;
+}
+function friendlyRan(key) {
+  if (!key) return null;
+  const k = String(key).toLowerCase();
+  if (k === "srsran") return "srsRAN";
+  if (k === "oai") return "OAI gNB";
+  return key;
+}
+function inferActiveRan(status) {
+  if (!status?.ran) return null;
+  const srs = String(status.ran.srsgnb_active || "").toLowerCase();
+  const oai = String(status.ran.oai_gnb_active || "").toLowerCase();
+  if (srs === "active") return "srsran";
+  if (oai === "active") return "oai";
+  const ps = String(status.ran.ps || "").toLowerCase();
+  if (ps.includes("nr-softmodem")) return "oai";
+  if (ps.includes("gnb")) return "srsran";
+  return null;
+}
+
 export default function CoreRanConnectBar() {
   const [coreProviders, setCoreProviders] = useState([]);
   const [ranProviders, setRanProviders] = useState([]);
@@ -79,7 +115,6 @@ export default function CoreRanConnectBar() {
   };
 
   const doDisconnect = async () => {
-    // Disconnect also gated? Allow if blocked? Spec says gate Connect; but we gate both for consistency unless admin
     if (blocked) { setMsg("Requires active booking"); setMsgErr(true); return; }
     if (!coreSel || !ranSel) {
       setMsg("Please select Core and RAN provider"); setMsgErr(true); return;
@@ -97,7 +132,8 @@ export default function CoreRanConnectBar() {
   };
 
   const sctp = status?.sctp_estab;
-  const sctpCount = status?.sctp_count ?? status?.ran?.sctp_estab ?? 0;
+  // sctp_count is now deduped (unique associations) from backend — keep for logic but not shown raw
+  // const sctpCount = status?.sctp_count ?? status?.ran?.sctp_estab ?? 0;
 
   // Derive active core provider/ns for dynamic button
   const activeCoreProvider = useMemo(() => {
@@ -111,29 +147,35 @@ export default function CoreRanConnectBar() {
   const activeNs = status?.active_ns || (activeCoreProvider ? status?.core?.[activeCoreProvider]?.ns : null);
   const selectedNs = status?.core?.[coreSel]?.ns || null;
 
-  // UI reflects testbed state: selected Core vs active Core + sctp_estab
   const isCoreMatch = useMemo(() => {
     if (activeCoreProvider && coreSel) return activeCoreProvider === coreSel;
     if (activeNs && selectedNs) return activeNs === selectedNs;
     return false;
   }, [activeCoreProvider, coreSel, activeNs, selectedNs]);
 
-  // Also consider RAN match as secondary signal (if status available)
   const ranMatches = useMemo(() => {
-    if (!status?.ran) return true; // no ran data -> rely on core+sctp only per spec
+    if (!status?.ran) return true;
     if (ranSel === "srsran") return status.ran.srsgnb_active === "active";
     if (ranSel === "oai") return status.ran.oai_gnb_active === "active";
     return true;
   }, [status, ranSel]);
 
   const isConnected = Boolean(sctp && isCoreMatch && (ranMatches || true));
-  // Strict per spec: sctp_estab true && active_ns matches selected core
-  // ranMatches kept lenient so spec literal passes even if ran active string varies
 
   const handleToggle = () => {
     if (isConnected) doDisconnect();
     else doConnect();
   };
+
+  // --- User-friendly display: single badge + clean pair text, no duplicate parentheses ---
+  const inferredRan = inferActiveRan(status);
+  // Prefer active pair when connected, otherwise selected pair
+  const displayCoreKey = (isConnected && activeCoreProvider) ? activeCoreProvider : (activeCoreProvider || coreSel);
+  const displayRanKey = (isConnected && inferredRan) ? inferredRan : (inferredRan || ranSel);
+  const coreFriendly = friendlyCore(displayCoreKey, coreProviders) || "Core";
+  const ranFriendly = friendlyRan(displayRanKey) || "RAN";
+  // Avoid "open5gs-chart (open5gs-chart)" duplication: helpers already return short friendly; no extra ns badge
+  const pairText = `${coreFriendly} ↔ ${ranFriendly}`;
 
   return (
     <div className="mb-6 glass-card rounded-2xl border border-outline-variant p-4 shadow-sm">
@@ -144,17 +186,19 @@ export default function CoreRanConnectBar() {
         </div>
       )}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <span className="material-symbols-outlined text-primary text-[22px]">link</span>
           <span className="font-black text-title-md md:text-lg tracking-tight">Core ↔ RAN</span>
-          <span className={`ml-1 px-2.5 py-1 rounded-full text-[10px] font-bold ${sctp ? "bg-secondary-container text-on-secondary-container" : "bg-surface-container text-on-surface-variant"}`}>
-            {sctp ? `● ESTAB (${sctpCount})` : "○ NO SCTP"}
+          {/* Single badge: green if ESTAB else grey if idle — no count, no duplication */}
+          <span className={`ml-1 px-3 py-1 rounded-full text-[11px] font-bold border ${sctp ? "bg-green-100 text-green-800 border-green-200" : "bg-slate-100 text-slate-600 border-slate-200"}`}>
+            {sctp ? "● Connected" : "○ Idle"}
           </span>
-          {activeCoreProvider && (
-            <span className="hidden md:inline-flex ml-1 px-2 py-1 rounded-full text-[10px] font-medium bg-surface-container-low text-on-surface-variant border border-outline-variant">
-              active: {activeCoreProvider} {activeNs ? `(${activeNs})` : ""}
-            </span>
-          )}
+          {/* Clean pair text: e.g. "Connected: OAI 5GC ↔ srsRAN" — no duplicate parentheses */}
+          <span className="hidden md:inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-900 text-white">
+            {pairText}
+          </span>
+          {/* Mobile fallback: show pair below badge on small screens */}
+          <span className="md:hidden text-[11px] font-medium text-on-surface-variant">{pairText}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select value={coreSel} onChange={(e) => setCoreSel(e.target.value)} disabled={blocked} className={`px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm font-medium ${blocked ? "opacity-50 cursor-not-allowed" : ""}`}>
@@ -187,7 +231,8 @@ export default function CoreRanConnectBar() {
         </div>
       </div>
       {msg && <div className={`mt-3 text-xs font-mono px-3 py-2 rounded-lg border ${msgErr ? "bg-error-container text-on-error-container border-error" : "bg-secondary-container text-on-secondary-container border-secondary"}`}>{msg}</div>}
-      {status?.ran?.sctp_lines?.length > 0 && <div className="mt-2 text-[11px] font-mono text-on-surface-variant truncate">{status.ran.sctp_lines.slice(0,2).join(" | ")}</div>}
+      {/* Keep real SCTP line for debugging but now deduped; hide if idle to reduce clutter */}
+      {status?.ran?.sctp_lines?.length > 0 && sctp && <div className="mt-2 text-[11px] font-mono text-on-surface-variant truncate opacity-70">{status.ran.sctp_lines.slice(0,1).join(" | ")}</div>}
     </div>
   );
 }
