@@ -186,7 +186,6 @@ export default function ReservationPage({ currentUser }) {
         </form>
         {err && <p className="mt-3 text-sm text-red-600 font-mono">{err}</p>}
         {okMsg && <p className="mt-3 text-sm text-emerald-600">{okMsg}</p>}
-        <p className="mt-2 text-xs text-on-surface-variant">Session-only: booking reserves time on the single B210 testbed. Overlap with any pending/active booking → 409 Slot taken. Provider (Core/RAN) chosen on Core page at connect time.</p>
       </div>
 
       {/* My Bookings — time only */}
