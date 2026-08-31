@@ -1364,7 +1364,7 @@ class SshRanAdapter:
                 "[ -n \"$m\" ] && echo \"PROC|$name|$m\"; done; "
                 "L=$(ls -t /home/ran/srsgnb*.log /home/ran/gnb*.log 2>/dev/null | head -1); "
                 "echo \"LOG|$L\"; "
-                "echo \"UE|$(tail -2000 \"$L\" 2>/dev/null | grep -oiE 'rnti[ =]?0x[0-9a-f]+' | sort -u | wc -l)\"; "
+                "echo \"UE|$(tail -2000 \"$L\" 2>/dev/null | grep -iE 'RRC|connected' | grep -oiE 'rnti[ =:]?0x[0-9a-f]+' | sort -u | wc -l)\"; "
                 "echo \"N2|$(sudo ss -Sn 2>/dev/null | grep ':38412' | grep -c ESTAB)\"; "
                 "echo \"E2|$(sudo ss -Sn 2>/dev/null | grep -E ':36421|:36422' | grep -c ESTAB)\"; "
                 "echo \"N2IP|$(sudo ss -Sn 2>/dev/null | grep ':38412' | grep ESTAB | grep -oE '[0-9.]+:38412' | head -1)\""
@@ -1425,10 +1425,13 @@ class SshRanAdapter:
         ping_target = self._cfg.get("amf_ip") or "10.91.2.151"
         latency_ms = self._get_latency_ms(ping_target)
 
+        # English detail: drop ARFCN, use · separator, N2/E2 idle vs connected
+        n2_state = "connected" if (n2_count > 0 or n2_ip) else "idle"
+        e2_state = "connected" if e2_count > 0 else "idle"
         detail = (
-            f"{self._cfg.get('type', gtype)} | n{self._cfg.get('band', '?')} "
-            f"{self._cfg.get('bw', '?')}MHz | ARFCN {self._cfg.get('arfcn', '?')} | PLMN {self._cfg.get('plmn', '?')} "
-            f"| N2: {n2_desc} | E2: {e2_desc}"
+            f"{self._cfg.get('type', gtype)} · n{self._cfg.get('band', '?')} "
+            f"{self._cfg.get('bw', '?')}MHz · PLMN {self._cfg.get('plmn', '?')} "
+            f"· N2 {n2_state} · E2 {e2_state}"
         )
         self._cache["gnb"] = {
             "id": "gnb",
@@ -1634,7 +1637,7 @@ class SrsRanSshAdapter(SshRanAdapter):
                 "[ -n \"$m\" ] && echo \"PROC|gnb|$m\"; "
                 "L=$(ls -t /home/ran/gnb*.log 2>/dev/null | head -1); "
                 "echo \"LOG|$L\"; "
-                "echo \"UE|$(tail -2000 \"$L\" 2>/dev/null | grep -oiE 'rnti[ =]?0x[0-9a-f]+' | sort -u | wc -l)\"; "
+                "echo \"UE|$(tail -2000 \"$L\" 2>/dev/null | grep -iE 'RRC|connected' | grep -oiE 'rnti[ =:]?0x[0-9a-f]+' | sort -u | wc -l)\"; "
                 "echo \"N2|$(sudo ss -Sn 2>/dev/null | grep ':38412' | grep -c ESTAB)\"; "
                 "echo \"E2|$(sudo ss -Sn 2>/dev/null | grep -E ':36421|:36422' | grep -c ESTAB)\"; "
                 "echo \"N2IP|$(sudo ss -Sn 2>/dev/null | grep ':38412' | grep ESTAB | grep -oE '[0-9.]+:38412' | head -1)\""
@@ -1690,10 +1693,12 @@ class SrsRanSshAdapter(SshRanAdapter):
         ping_target = self._cfg.get("amf_ip") or "10.91.2.151"
         latency_ms = self._get_latency_ms(ping_target)
 
+        n2_state = "connected" if (n2_count > 0 or n2_ip) else "idle"
+        e2_state = "connected" if e2_count > 0 else "idle"
         detail = (
-            f"srsRAN gNB | n{self._cfg.get('band', '?')} "
-            f"{self._cfg.get('bw', '?')}MHz | ARFCN {self._cfg.get('arfcn', '?')} | PLMN {self._cfg.get('plmn', '?')} "
-            f"| N2: {n2_desc} | E2: {e2_desc}"
+            f"srsRAN gNB · n{self._cfg.get('band', '?')} "
+            f"{self._cfg.get('bw', '?')}MHz · PLMN {self._cfg.get('plmn', '?')} "
+            f"· N2 {n2_state} · E2 {e2_state}"
         )
         self._cache["gnb"] = {
             "id": "gnb",
