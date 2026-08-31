@@ -2655,7 +2655,7 @@ def _build_ric_providers() -> dict:
                 namespace=ric_ns,
                 kubeconfig=ric_kubeconf,
             )
-            desc = f"FlexRIC nearRT-RIC — live dari Kubernetes (ns {ric_ns} via kubectl@{ric_k8s_host})"
+            desc = "FlexRIC nearRT-RIC"
         except Exception as e:
             print(f"[RIC K8s] fallback mock due to {e}", flush=True)
             adapter = RicAdapter()
