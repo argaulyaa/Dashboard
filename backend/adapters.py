@@ -832,7 +832,7 @@ class KubectlOaiCoreAdapter:
                 "kind": CORE_KIND_LABELS.get(comp_id, comp_id.upper()),
                 "status": status,
                 "detail": detail_str,
-                "host": info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else self._ssh["host"],
+                "host": info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else None,
                 "cpu_pct": met.get("cpu_pct", 0.0),
                 "mem_gb": round(met.get("mem_mi", 0.0) / 1024.0, 2),
                 "mem_pct": 0.0,  # persen butuh kapasitas node; sengaja 0 (jujur)
@@ -930,7 +930,7 @@ class KubectlOaiCoreAdapter:
             "kind": CORE_KIND_LABELS.get(comp_id, comp_id.upper()),
             "status": "down",
             "detail": reason,
-            "host": self._ssh["host"],
+            "host": None,
             "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
             "throughput_mbps": 0.0, "port": 0, "latency_ms": 0.0,
             "active_ues": 0,
@@ -1168,8 +1168,8 @@ class KubectlOpen5gsCoreAdapter:
             # Sanitize: strip any raw ss/ESTAB IP:port noise if it leaks into detail
             detail_str = " • ".join(detail_bits)
             detail_str = self._strip_estab(detail_str)
-            # host = pod IP (real), fallback to SSH host if pod IP empty (e.g. pending)
-            host_val = info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else self._ssh["host"]
+            # host = pod IP (real), fallback to None if pod IP empty (e.g. pending) — never bare-metal 10.91.2.156
+            host_val = info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else None
             self._cache[comp_id] = {
                 "id": comp_id,
                 "name": comp_id.upper(),
@@ -1268,7 +1268,7 @@ class KubectlOpen5gsCoreAdapter:
             "kind": CORE_KIND_LABELS.get(comp_id, comp_id.upper()),
             "status": "down",
             "detail": reason,
-            "host": self._ssh["host"],
+            "host": None,
             "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
             "throughput_mbps": 0.0, "port": 0, "latency_ms": 0.0,
             "active_ues": 0,
@@ -2256,7 +2256,7 @@ class KubectlRicAdapter:
             detail_bits.append(f"uptime {self._fmt_uptime(int(uptime))}" if uptime else "uptime -")
             if ping_ms:
                 detail_bits.append(f"latency {ping_ms}ms")
-            host_val = info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else self._ssh["host"]
+            host_val = info["pod_ip"] if info["pod_ip"] and info["pod_ip"] != "<none>" else None
             self._cache[comp_id] = {
                 "id": comp_id, "name": "FlexRIC RIC", "kind": "near-RT RIC", "status": status,
                 "detail": " • ".join(detail_bits), "host": host_val,
@@ -2321,7 +2321,7 @@ class KubectlRicAdapter:
         except Exception: return f"{secs}s"
 
     def _down_component(self, comp_id: str, reason: str) -> dict:
-        return {"id": comp_id, "name": "FlexRIC RIC", "kind": "near-RT RIC", "status": "down", "detail": reason, "host": self._ssh["host"], "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0, "throughput_mbps": 0.0, "port": 36421, "latency_ms": 0.0, "active_ues": 0, "last_updated": time.time(), "uptime_seconds": 0, "started_at": time.time()}
+        return {"id": comp_id, "name": "FlexRIC RIC", "kind": "near-RT RIC", "status": "down", "detail": reason, "host": None, "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0, "throughput_mbps": 0.0, "port": 36421, "latency_ms": 0.0, "active_ues": 0, "last_updated": time.time(), "uptime_seconds": 0, "started_at": time.time()}
 
 
 # ---------------------------------------------------------------------------
