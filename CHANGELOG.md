@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-01 - Overview: hapus tulisan Check gNB (surgical)
+
+### Perubahan
+- `frontend/src/pages/Overview.jsx` — `DomainCard`: hapus block `Check {problem.name}` (button RAN-only, `onSelect` ke drawer) + dead vars `problem` & `isMock`. Card RAN kini identik Core/RIC: hanya `View all components` + uptime/health. Props `onSelect` tetap diteruskan (no-op) agar tidak pecah `App.jsx`/`Overview` contract. Surgical: 10 baris JSX + 2 vars dihapus, tidak ada perubahan lain di Overview, MetricCard, atau backend.
+
+### Verifikasi (surgical, jangan rusak fitur lain)
+- `npm run build` PASS (vite 5.4.21, 68 modules, `index-CupIvpdp.js` 620kB). `grep -F "Check "` di `dist/assets/*.js` = 0 (hanya sisa React `Checked`/`CheckLineTerminator` internal, bukan `Check gNB`). `grep "View all components"` = 1 (fitur lain tetap).
+- Git diff: `-9/+0` net di `DomainCard`, tidak menyentuh `MetricCard`, `Recent Activity`, reservation, atau routing. Tidak ada API/backend change.
+- Manual: Overview masih render 3 DomainCards + 3 MetricCards + Reservations + Recent Activity (admin-only).
+
+
+
 ## 2026-08-28 - Fix Overview: honest metrics (hapus mock bandwidth & latency hardcoded)
 
 ### Audit (Before)

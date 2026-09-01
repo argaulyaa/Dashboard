@@ -102,9 +102,7 @@ function MetricCard({ label, value, icon, color }) {
 function DomainCard({ domainKey, components, onSelect, nowSeconds }) {
   const meta = DOMAIN_META[domainKey];
   const health = domainHealth(components);
-  const problem = components.find((c) => c.status !== "healthy");
   const uptime = domainUptimeSeconds(components, nowSeconds);
-  const isMock = false;
 
   return (
     <div className={`bg-white p-6 rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] border-t-4 ${ACCENT_BORDER[domainKey]}`}>
@@ -120,14 +118,6 @@ function DomainCard({ domainKey, components, onSelect, nowSeconds }) {
         <Link className="text-primary hover:underline font-label-lg flex items-center gap-1" to={`/${domainKey}`}>
           View all components <span className="material-symbols-outlined text-[16px]">chevron_right</span>
         </Link>
-        {problem && domainKey === "ran" && (
-          <button
-            className="text-left bg-transparent text-primary hover:underline font-label-lg flex items-center gap-1"
-            onClick={() => onSelect(domainKey, problem)}
-          >
-            Check {problem.name} <span className="material-symbols-outlined text-[16px]">chevron_right</span>
-          </button>
-        )}
       </div>
     </div>
   );
