@@ -1578,10 +1578,15 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
     except Exception:
         provider_q = ""
     dashboard_user = init.get("user", "")
-    active_reservation = reservations.get_active_reservation(domain, comp_id, dashboard_user)
+    # JEK OAI ONLY: global booking gate — Active Session apapun untuk user ini boleh Console, gak perlu domain/comp_id match
+    # cek booking global dulu (booking.py), fallback ke per-component reservations
+    import booking as _bk
+    active_reservation = _bk.get_my_active_reservation(dashboard_user)
+    if not active_reservation:
+        active_reservation = reservations.get_active_reservation(domain, comp_id, dashboard_user)
     if not active_reservation:
         await ws.send_text(
-            "\r\n[access denied: no active reservation found for your user during the current time slot.]\r\n"
+            "\r\n[access denied: no active reservation found for your user during the current time slot. Book at /reservations]\r\n"
         )
         await ws.close()
         return
