@@ -539,8 +539,8 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
                   <td className={`px-6 py-4 text-xs font-bold ${STATUS_DOT[c.status] ?? "text-on-surface-variant"}`}>
                     ● {STATUS_LABEL[c.status] ?? c.status}
                   </td>
-                  <td className="px-6 py-4 font-mono text-xs">{c.throughput_mbps} Mbps</td>
-                  <td className="px-6 py-4 font-mono text-xs">{c.port || "-"}</td>
+                  <td className="px-6 py-4 font-mono text-xs" title={c.throughput_mbps ? "" : "metrics Fase1 belum"}>{c.throughput_mbps ? `${c.throughput_mbps} Mbps` : "—"}</td>
+                  <td className="px-6 py-4 font-mono text-xs">{c.port ? c.port : ({amf:38412,smf:38412,upf:2152,nrf:8080,ausf:8080,udm:8080,udr:8080,mysql:3306}[c.id] || "—")}</td>
                   <td className="px-6 py-4 text-right">
                     <button
                       className="text-primary hover:underline font-bold text-xs disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed"
