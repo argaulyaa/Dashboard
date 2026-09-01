@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from "react";
-import { fetchProviders, fetchComponents } from "../api.js";
+import { fetchProviders, fetchComponents, fetchActiveBooking } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
 import { usePageHeader } from "../components/PageHeaderContext.jsx";
@@ -48,8 +48,16 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
   const [providerComponents, setProviderComponents] = useState(null);
   const [restartingId, setRestartingId] = useState(null);
   const [logTarget, setLogTarget] = useState(null);
+  const [hasBooking, setHasBooking] = useState(null);
+  const isAdminRole = (()=>{ try{ return getRole()==="admin"; }catch{ return false; } })();
+  const blockedByBooking = !isAdminRole && hasBooking===false;
+  // poll booking like CorePage
 
   // Fetch daftar provider dari backend (data-driven, sama pola CorePage & RanPage)
+  useEffect(() => {
+    const check=async()=>{ if(isAdminRole){ setHasBooking(true); return; } try{ const a=await fetchActiveBooking(); setHasBooking(!!a); }catch{ setHasBooking(false); } };
+    check(); const id=setInterval(check,8000); return()=>clearInterval(id);
+  }, [isAdminRole]);
   useEffect(() => {
     fetchProviders("ric")
       .then((list) => {
@@ -215,8 +223,10 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
             {(getRole() === "user" || getRole() === "admin") && (
               hero?.host ? (
                 <button
-                  className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-container transition-colors font-bold text-sm shadow-md active:scale-95 transition-all"
-                  onClick={() => onSelect(hero)}
+                  className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-bold text-sm shadow-md transition-all ${blockedByBooking ? "bg-outline-variant text-white opacity-50 cursor-not-allowed" : "bg-primary text-white hover:bg-primary-container active:scale-95"}`}
+                  onClick={() => { if(blockedByBooking){ alert("Requires active booking — book a session at /reservations"); return; } onSelect(hero); }}
+                  disabled={blockedByBooking}
+                  title={blockedByBooking ? "Requires active booking — book a session at /reservations" : "Open terminal"}
                 >
                   <span className="material-symbols-outlined text-lg">terminal</span>
                   Console
