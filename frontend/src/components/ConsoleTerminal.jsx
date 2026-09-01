@@ -11,8 +11,8 @@ export default function SshTerminal({ domain, componentId, host, currentUser, pr
   const termRef = useRef(null);
 
   useEffect(() => {
-    // JEK OAI/open5gs: auto-connect for pod without manual form (still respects reservation gate on BE)
-    if ((provider==="oai" || provider==="open5gs") && domain==="core") {
+    // JEK OAI/open5gs/RIC: auto-connect for pod without manual form
+    if (((provider==="oai" || provider==="open5gs") && domain==="core") || domain==="ric") {
       // delay to let term mount
       const tid=setTimeout(()=>{ if(!connected) connect(); }, 400);
       return () => { clearTimeout(tid); wsRef.current?.close(); termRef.current?.dispose(); };
@@ -67,7 +67,7 @@ export default function SshTerminal({ domain, componentId, host, currentUser, pr
     window.addEventListener("resize", handleResize);
   };
 
-  const isOaiAuto = (provider==="oai" || provider==="open5gs") && domain==="core";
+  const isOaiAuto = ((provider==="oai" || provider==="open5gs") && domain==="core") || domain==="ric";
   if (!connected) {
     if (isOaiAuto) {
       return (
