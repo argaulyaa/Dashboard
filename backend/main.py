@@ -1609,7 +1609,7 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
         # Fallback: coba oai dulu, kalau gagal coba open5gs (untuk drawer yang gak bawa provider jelas)
         if prefix=="open5gs":
             ns_fallback = "open5gs-chart" if ns_oai=="open5gs-v2" else "open5gs-v2"
-            initial_cmd = f"pod=$(kubectl -n {ns_oai} get pods -o name 2>/dev/null | grep -E '{prefix}-{comp_id}' | head -1 | cut -d/ -f2); if [ -z \"$pod\" ]; then pod=$(kubectl -n {ns_fallback} get pods -o name 2>/dev/null | grep -E '{prefix}-{comp_id}' | head -1 | cut -d/ -f2); ns_eff=$ns_fallback; else ns_eff={ns_oai}; fi; if [ -n \"$pod\" ]; then kubectl -n $ns_eff exec -it $pod -- /bin/bash 2>/dev/null || kubectl -n $ns_eff exec -it $pod -- /bin/sh; else echo \"Pod not available ({prefix}-{comp_id} in {ns_oai}/{ns_fallback})\"; fi\n"
+            initial_cmd = f"pod=$(kubectl -n {ns_oai} get pods -o name 2>/dev/null | grep -E '{prefix}-{comp_id}' | head -1 | cut -d/ -f2); if [ -z \"$pod\" ]; then pod=$(kubectl -n {ns_fallback} get pods -o name 2>/dev/null | grep -E '{prefix}-{comp_id}' | head -1 | cut -d/ -f2); ns_eff=\"{ns_fallback}\"; else ns_eff=\"{ns_oai}\"; fi; if [ -n \"$pod\" ]; then kubectl -n $ns_eff exec -it $pod -- /bin/bash 2>/dev/null || kubectl -n $ns_eff exec -it $pod -- /bin/sh; else echo \"Pod not available ({prefix}-{comp_id} in {ns_oai}/{ns_fallback})\"; fi\n"
         else:
             initial_cmd = f"pod=$(kubectl -n {ns_oai} get pods -o name 2>/dev/null | grep -E '{prefix}-{comp_id}' | head -1 | cut -d/ -f2); if [ -n \"$pod\" ]; then kubectl -n {ns_oai} exec -it $pod -- /bin/bash 2>/dev/null || kubectl -n {ns_oai} exec -it $pod -- /bin/sh; else echo \"Pod not available ({prefix}-{comp_id} in {ns_oai})\"; fi\n"
         await run_ssh_bridge(
