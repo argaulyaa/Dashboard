@@ -387,8 +387,8 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
                   onClick={() => {
                     if (blockedByBooking) return;
                     if (!hero) return;
-                    // JEK: OAI only — langsung modal terminal pod AMF, bukan drawer detail
-                    if (activeProvider==="oai" && hero.id==="amf") setConsoleTarget({domain:"core", compId:"amf", provider:"oai", compName: hero.name});
+                    // JEK: OAI/open5gs — langsung modal terminal pod AMF, bukan drawer detail
+                    if ((activeProvider==="oai" || activeProvider==="open5gs") && hero.id==="amf") setConsoleTarget({domain:"core", compId:"amf", provider:activeProvider, compName: hero.name});
                     else onSelect(hero);
                   }}
                   disabled={blockedByBooking}
@@ -467,7 +467,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
                   <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center text-primary border border-primary/30">
                     <span className="material-symbols-outlined">terminal</span>
                   </div>
-                  <h3 className="font-bold text-sm sm:text-base text-white">Console • OAI AMF</h3>
+                  <h3 className="font-bold text-sm sm:text-base text-white">Console • {consoleTarget.provider==="open5gs" ? "open5GS AMF" : "OAI AMF"}</h3>
                   <span className="text-[11px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">core/oai</span>
                 </div>
                 <button onClick={()=>setConsoleTarget(null)} className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">×</button>

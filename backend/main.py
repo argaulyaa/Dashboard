@@ -1594,7 +1594,8 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
     # JEK OAI ONLY: kalau Core OAI 5GC, arahkan console ke terminal pod deployment (bukan host shell biasa)
     # host 10.91.2.156 adalah master K8s; pod OAI ada di ns 5g-core deployment oai-* . User tetap wajib reservasi (cek di atas).
     # JEK: OAI AMF pod auto-discovery via label — jangan hardcode pod hash, cari pod Running di ns dari CORE_RAN_MAP
-    is_oai_core = (domain == "core" and (provider_q=="oai" or (not provider_q and comp_id=="amf"))) and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP
+    is_core_pod = (domain == "core" and provider_q in ("oai","open5gs") and comp_id in (DEFAULT_OAI_K8S_COMPONENT_MAP if provider_q=="oai" else DEFAULT_OPEN5GS_K8S_COMPONENT_MAP)) or (domain == "core" and not provider_q and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP)
+    is_oai_core = is_core_pod
     if is_oai_core:
         # OAI 5GC: SSH ke master, lalu exec ke pod deployment (satu-satunya OAI, tidak sentuh open5gs)
         oai_host = os.environ.get("OAI_K8S_SSH_HOST", "10.91.2.156")
@@ -1602,9 +1603,10 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
         oai_pass = os.environ.get("OAI_K8S_SSH_PASSWORD", os.environ.get("K8S_SUDO_PASSWORD","123"))
         # Kirim via run_ssh_bridge ke master, tapi set username/password dari env OAI (bukan dari form user)
         # Form tetap dipakai untuk audit, tapi koneksi pakai kredensial OAI K8s yang valid
-        ns_oai = CORE_RAN_MAP.get("oai", {}).get("ns", "5g-core")
-        # Use deployment exec — gak pakai label, hash pod auto (oai-amf-665df89489-wxfsd)
-        initial_cmd = f"kubectl -n {ns_oai} exec -it deployment/oai-{comp_id} -- /bin/bash 2>/dev/null || kubectl -n {ns_oai} exec -it deployment/oai-{comp_id} -- /bin/sh\n"
+        # provider-aware ns + prefix (oai vs open5gs)
+        ns_oai = CORE_RAN_MAP.get(provider_q if provider_q in CORE_RAN_MAP else "oai", {}).get("ns", "5g-core")
+        prefix = "oai" if provider_q=="oai" or (not provider_q and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP) else "open5gs" if provider_q=="open5gs" else "oai"
+        initial_cmd = f"kubectl -n {ns_oai} exec -it deployment/{prefix}-{comp_id} -- /bin/bash 2>/dev/null || kubectl -n {ns_oai} exec -it deployment/{prefix}-{comp_id} -- /bin/sh\n"
         await run_ssh_bridge(
             ws,
             host=oai_host,
