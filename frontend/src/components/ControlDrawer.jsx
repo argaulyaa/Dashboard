@@ -113,10 +113,12 @@ export default function ControlDrawer({ domain, component, currentUser, onClose,
                 ssh user@{component.host}
               </code>
               <Link
-                className="font-sans text-[13px] font-semibold px-4 py-2.5 rounded-lg border border-restarting/40 bg-primary text-white cursor-pointer w-full text-center hover:bg-primary-container block"
-                to={`/ssh/${domain}/${component.id}`}
+                className={`font-sans text-[13px] font-semibold px-4 py-2.5 rounded-lg border w-full text-center block ${heldByMe ? "border-restarting/40 bg-primary text-white hover:bg-primary-container" : "border-outline-variant bg-transparent text-on-surface-variant opacity-60 cursor-not-allowed pointer-events-none"}`}
+                to={`/ssh/${domain}/${component.id}${domain==="core" && component.id.match(/^(amf|smf|upf|nrf|ausf|udm|udr|mysql)$/) ? "?provider=oai" : ""}`}
+                onClick={(e)=>{ if(!heldByMe){ e.preventDefault(); alert("Requires active booking — book a session at /reservations"); } }}
+                title={heldByMe ? "Open terminal for "+component.id+" ("+(domain==="core"?"OAI 5GC":"")+")" : "Requires active booking"}
               >
-                Open Console
+                Open Console{domain==="core" && component.id.match(/^(amf|smf|upf|nrf|ausf|udm|udr|mysql)$/) ? " • OAI" : ""}
               </Link>
             </>
           )}

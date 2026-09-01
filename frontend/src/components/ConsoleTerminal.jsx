@@ -35,7 +35,7 @@ export default function SshTerminal({ domain, componentId, host, currentUser }) 
       window.location.port === "5173"
         ? `${window.location.hostname}:8000`
         : window.location.host;
-    const ws = new WebSocket(`${proto}://${host}/ws/ssh/${domain}/${componentId}`);
+    const urlParams = new URLSearchParams(window.location.search); const providerParam = urlParams.get("provider"); const wsUrl = `${proto}://${host}/ws/ssh/${domain}/${componentId}${providerParam ? `?provider=${providerParam}` : (domain==="core" ? "?provider=oai" : "")}`; const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {

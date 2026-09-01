@@ -1571,6 +1571,12 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
         await ws.close()
         return
 
+    # OAI provider from query ?provider=oai (ControlDrawer/ConsoleTerminal)
+    provider_q = ""
+    try:
+        provider_q = ws.query_params.get("provider", "") or ""
+    except Exception:
+        provider_q = ""
     dashboard_user = init.get("user", "")
     active_reservation = reservations.get_active_reservation(domain, comp_id, dashboard_user)
     if not active_reservation:
@@ -1582,7 +1588,7 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
 
     # JEK OAI ONLY: kalau Core OAI 5GC, arahkan console ke terminal pod deployment (bukan host shell biasa)
     # host 10.91.2.156 adalah master K8s; pod OAI ada di ns 5g-core deployment oai-* . User tetap wajib reservasi (cek di atas).
-    is_oai_core = (domain == "core" and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP)
+    is_oai_core = (domain == "core" and (provider_q=="oai" or (not provider_q and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP)))
     if is_oai_core:
         # OAI 5GC: SSH ke master, lalu exec ke pod deployment (satu-satunya OAI, tidak sentuh open5gs)
         oai_host = os.environ.get("OAI_K8S_SSH_HOST", "10.91.2.156")
