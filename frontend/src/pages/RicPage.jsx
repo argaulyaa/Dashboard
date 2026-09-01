@@ -97,19 +97,33 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
     latencyMs: hero?.latency_ms ?? 0,
   };
 
-  // Log semu dibangun dari data komponen ASLI (status + detail + last_updated),
-  // bukan endpoint log sungguhan -- backend belum punya stream log/event.
+  // RIC live logs — baca kubectl logs deployment/flexric-nearrt-ric di ns ric (KubectlRicAdapter), bukan derived mock
+  const [liveLogs, setLiveLogs] = useState("");
   const logLines = useMemo(() => {
-    return [...displayedComponents]
-      .sort((a, b) => (b.last_updated || 0) - (a.last_updated || 0))
-      .slice(0, 8)
-      .map((c, i) => ({
-        key: `${c.id}-${i}`,
-        time: formatClock(c.last_updated),
-        level: c.status === "down" ? "ERROR" : c.status === "degraded" ? "WARN" : "INFO",
-        text: `${c.name}: ${c.detail || "no detail"}`,
-      }));
-  }, [displayedComponents]);
+    if (liveLogs) {
+      return liveLogs.split("\n").filter(l=>l.trim()).slice(-8).map((line,i)=>{
+        const lower=line.toLowerCase();
+        const level= lower.includes("error")||lower.includes("fail") ? "ERROR" : lower.includes("warn") ? "WARN" : "INFO";
+        return {key: `live-${i}`, time: formatClock(Date.now()/1000), level, text: line.slice(0,120)};
+      });
+    }
+    // fallback mock kalau liveLogs belum ada
+    return [...displayedComponents].sort((a,b)=>(b.last_updated||0)-(a.last_updated||0)).slice(0,8).map((c,i)=>({key:`${c.id}-${i}`, time:formatClock(c.last_updated), level:c.status==="down"?"ERROR":c.status==="degraded"?"WARN":"INFO", text:`${c.name}: ${c.detail||"no detail"}`}));
+  }, [displayedComponents, liveLogs]);
+  useEffect(()=>{
+    let cancelled=false;
+    const fetchLogs=async()=>{
+      try{
+        const res=await fetch(`/api/ric/components/${hero?.id||"flexric-nearrt-ric"}/logs?provider=oai&tail=20`, {headers:{Authorization:`Bearer ${localStorage.getItem("token")||""}`}});
+        if(!res.ok) return;
+        const data=await res.json();
+        if(!cancelled && data.logs) setLiveLogs(data.logs);
+      }catch{}
+    };
+    if(hero?.id) fetchLogs();
+    const id=setInterval(fetchLogs, 5000);
+    return()=>{ cancelled=true; clearInterval(id); };
+  }, [hero?.id]);
 
   const handleRestartRow = async (id) => {
     setRestartingId(id);
