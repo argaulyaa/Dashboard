@@ -231,8 +231,7 @@ export default function CoreRanConnectBar() {
         </div>
       </div>
       {msg && <div className={`mt-3 text-xs font-mono px-3 py-2 rounded-lg border ${msgErr ? "bg-error-container text-on-error-container border-error" : "bg-secondary-container text-on-secondary-container border-secondary"}`}>{msg}</div>}
-      {/* Keep real SCTP line for debugging but now deduped; hide if idle to reduce clutter */}
-      {status?.ran?.sctp_lines?.length > 0 && sctp && <div className="mt-2 text-[11px] font-mono text-on-surface-variant truncate opacity-70">{status.ran.sctp_lines.slice(0,1).join(" | ")}</div>}
+      {/* SCTP raw line hidden per request — mengganggu di CORE page; info tetap ada di View Logs / ss di RAN. Badge Connected sudah cukup. */}
     </div>
   );
 }
