@@ -68,11 +68,13 @@ async def run_ssh_bridge(ws: WebSocket, host: str, port: int, username: str, pas
                 break
 
     pump_task = asyncio.create_task(pump_ssh_to_ws())
-    # JEK OAI: kalau ada initial_cmd (kubectl exec), kirim otomatis setelah shell siap
+    # JEK OAI/open5gs: kirim kubectl exec setelah shell prompt siap (1.8s biar gak ke-type doang)
     if initial_cmd:
         try:
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(1.8)
             channel.send(initial_cmd)
+            await asyncio.sleep(0.3)
+            channel.send("\n")
         except Exception:
             pass
 
