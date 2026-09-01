@@ -25,7 +25,7 @@ const STATUS_PILL = {
 
 export default function ControlDrawer({ domain, component, currentUser, onClose, onRestart }) {
   const [busyRestart, setBusyRestart] = useState(false);
-  const providerQuery = domain==="core" && component && component.id.match(/^(amf|smf|upf|nrf|ausf|udm|udr|mysql|pcf|bsf|nssf|scp|sepp)$/) ? (component.name && component.name.toLowerCase().includes("open5gs") ? "?provider=open5gs" : "?provider=oai") : "";
+  const providerQuery = (()=>{ if(domain==="core" && component && component.id.match(/^(amf|smf|upf|nrf|ausf|udm|udr|mysql|pcf|bsf|nssf|scp|sepp)$/)) return component.name && component.name.toLowerCase().includes("open5gs") ? "?provider=open5gs" : "?provider=oai"; if(domain==="ric") return "?provider=ric"; return ""; })();
 
   if (!component) return null;
 
@@ -117,7 +117,7 @@ export default function ControlDrawer({ domain, component, currentUser, onClose,
                 className={`font-sans text-[13px] font-semibold px-4 py-2.5 rounded-lg border w-full text-center block ${heldByMe ? "border-restarting/40 bg-primary text-white hover:bg-primary-container" : "border-outline-variant bg-transparent text-on-surface-variant opacity-60 cursor-not-allowed pointer-events-none"}`}
                 to={`/ssh/${domain}/${component.id}${providerQuery}`}
                 onClick={(e)=>{ if(!heldByMe){ e.preventDefault(); alert("Requires active booking — book a session at /reservations"); } }}
-                title={heldByMe ? 'Open terminal for '+component.id+' ('+(component.name && component.name.toLowerCase().includes('open5gs') ? 'open5GS' : 'OAI 5GC')+')' : 'Requires active booking'}
+                title={heldByMe ? 'Open terminal for '+component.id+' ('+(domain==="ric" ? "FlexRIC RIC" : (component.name && component.name.toLowerCase().includes('open5gs') ? 'open5GS' : 'OAI 5GC'))+')' : 'Requires active booking'}
               >
                 Open Console
               </Link>

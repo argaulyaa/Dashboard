@@ -28,7 +28,7 @@ export default function SshPage({ data, currentUser }) {
 
   return (
     <div>
-      <h1 className="text-xl mt-0 mb-1">Console — {component.name}</h1>
+      <h1 className="text-xl mt-0 mb-1">Console • {domain==="ric" ? "FlexRIC RIC" : (component.name && component.name.toLowerCase().includes("open5gs") ? "open5GS" : "OAI")} — {component.name}</h1>
       <p className="text-dim text-[13px] mb-5">{component.host}</p>
 
       {!heldByMe && (
@@ -44,6 +44,7 @@ export default function SshPage({ data, currentUser }) {
           componentId={componentId}
           host={component.host}
           currentUser={currentUser}
+          provider={new URLSearchParams(window.location.search).get("provider") || (domain==="ric" ? "ric" : (component.name && component.name.toLowerCase().includes("open5gs") ? "open5gs" : "oai"))}
         />
       )}
     </div>

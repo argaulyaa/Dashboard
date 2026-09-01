@@ -253,7 +253,7 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
                   <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center text-primary border border-primary/30">
                     <span className="material-symbols-outlined">terminal</span>
                   </div>
-                  <h3 className="font-bold text-sm sm:text-base text-white">Console • RIC {consoleTarget.compName}</h3>
+                  <h3 className="font-bold text-sm sm:text-base text-white">Console • FlexRIC RIC</h3>
                   <span className="text-[11px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">ric/{consoleTarget.provider}</span>
                 </div>
                 <button onClick={()=>setConsoleTarget(null)} className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">×</button>
