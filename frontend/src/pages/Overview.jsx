@@ -235,7 +235,7 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-gutter">
-        <div className="lg:col-span-8">
+        <div className="lg:col-span-12">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter">
             {Object.keys(DOMAIN_META).map((key) => (
               <DomainCard
@@ -249,7 +249,7 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
           </div>
         </div>
 
-        <div className="lg:col-span-4">
+        <div className="col-span-12">
           <div className="bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)]">
             <div className="p-6 border-b border-outline-variant flex justify-between items-center">
               <h4 className="font-title-lg text-title-lg">Active Reservations</h4>

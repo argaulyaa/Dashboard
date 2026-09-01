@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-01 - Overview: pindah Active Reservations ke bawah Core/RAN/RIC
+
+### Perubahan
+- `frontend/src/pages/Overview.jsx` — grid `lg:grid-cols-12`: `DomainCards` `lg:col-span-8` → `lg:col-span-12` (full-width 3 kolom), kotak `Active Reservations` `lg:col-span-4` (side-by-side) → `col-span-12` (full-width di bawah Core/RAN/RIC). Urutan kini: MetricCards (3) → DomainCards (3) → Active Reservations (full) → Recent Activity (admin-only, full). Surgical: 2 baris className diubah, tidak menyentuh logic, API, atau routing.
+
+### Verifikasi
+- `npm run build` PASS (vite 5.4.21, 68 modules, `index-Bga_-Whf.js` 620kB). `grep col-span` di `Overview.jsx` = `lg:col-span-12` (domain) + `col-span-12` (reservations + activity). Tampilan bawah tetap `Manage Reservations` link & list 4 rezervations.
+- Git diff: `-2/+2` hanya className, tidak menyentuh MetricCard atau DomainCard logic.
+
 ## 2026-09-01 - Overview: hapus tulisan Check gNB (surgical)
 
 ### Perubahan
