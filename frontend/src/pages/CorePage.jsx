@@ -395,7 +395,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
                   title={blockedByBooking ? "Requires active booking — book a session at /reservations" : "Open terminal for "+(activeProvider==="oai"?"OAI 5GC":""+activeProvider)+" "+(hero?.name||"")}
                 >
                   <span className="material-symbols-outlined text-lg">terminal</span>
-                  Console{activeProvider==="oai"?" • OAI": ""}
+                  Console
                 </button>
               ) : (
                 <button

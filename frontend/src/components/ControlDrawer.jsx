@@ -119,7 +119,7 @@ export default function ControlDrawer({ domain, component, currentUser, onClose,
                 onClick={(e)=>{ if(!heldByMe){ e.preventDefault(); alert("Requires active booking — book a session at /reservations"); } }}
                 title={heldByMe ? 'Open terminal for '+component.id+' ('+(component.name && component.name.toLowerCase().includes('open5gs') ? 'open5GS' : 'OAI 5GC')+')' : 'Requires active booking'}
               >
-                Open Console{domain==="core" && component.id.match(/^(amf|smf|upf|nrf|ausf|udm|udr|mysql|pcf|bsf|nssf|scp|sepp)$/) ? (component.name && component.name.toLowerCase().includes("open5gs") ? " • open5GS" : " • OAI") : ""}
+                Open Console
               </Link>
             </>
           )}
