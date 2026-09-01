@@ -467,7 +467,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
                 <button onClick={()=>setConsoleTarget(null)} className="text-on-surface-variant hover:text-on-surface text-xl">×</button>
               </div>
               <div className="flex-1 p-3 bg-[#0e1420] overflow-hidden">
-                <ConsoleTerminal domain={consoleTarget.domain} componentId={consoleTarget.compId} host={`${consoleTarget.provider}-amf`} currentUser={currentUser} />
+                <ConsoleTerminal domain={consoleTarget.domain} componentId={consoleTarget.compId} provider={consoleTarget.provider} host={`${consoleTarget.provider}-amf`} currentUser={currentUser} />
               </div>
               
             </div>
