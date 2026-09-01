@@ -1606,7 +1606,13 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
         # provider-aware ns + prefix (oai vs open5gs)
         ns_oai = CORE_RAN_MAP.get(provider_q if provider_q in CORE_RAN_MAP else "oai", {}).get("ns", "5g-core")
         prefix = "oai" if provider_q=="oai" or (not provider_q and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP) else "open5gs" if provider_q=="open5gs" else "oai"
-        initial_cmd = f"kubectl -n {ns_oai} exec -it deployment/{prefix}-{comp_id} -- /bin/bash 2>/dev/null || kubectl -n {ns_oai} exec -it deployment/{prefix}-{comp_id} -- /bin/sh\n"
+        # Fallback: coba oai dulu, kalau gagal coba open5gs (untuk drawer yang gak bawa provider jelas)
+        if provider_q in ("oai","open5gs"):
+            initial_cmd = f"kubectl -n {ns_oai} exec -it deployment/{prefix}-{comp_id} -- /bin/bash 2>/dev/null || kubectl -n {ns_oai} exec -it deployment/{prefix}-{comp_id} -- /bin/sh\n"
+        else:
+            # No provider param (drawer) — coba oai dulu lalu open5gs
+            ns_open5gs = CORE_RAN_MAP.get("open5gs", {}).get("ns", "open5gs-chart") if "open5gs" in CORE_RAN_MAP else "open5gs-chart"
+            initial_cmd = f"kubectl -n 5g-core exec -it deployment/oai-{comp_id} -- /bin/bash 2>/dev/null || kubectl -n 5g-core exec -it deployment/oai-{comp_id} -- /bin/sh 2>/dev/null || kubectl -n {ns_open5gs} exec -it deployment/open5gs-{comp_id} -- /bin/bash 2>/dev/null || kubectl -n {ns_open5gs} exec -it deployment/open5gs-{comp_id} -- /bin/sh\n"
         await run_ssh_bridge(
             ws,
             host=oai_host,
