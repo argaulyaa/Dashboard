@@ -434,9 +434,9 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
               }
               className={
                 isActiveTab
-                  ? `px-6 py-2.5 bg-error text-on-error font-bold rounded-lg shadow-md transition-all flex items-center gap-2 ${isViewer || isBusy ? "opacity-50 cursor-not-allowed" : "hover:brightness-110 active:scale-95"}`
+                  ? `px-6 py-2.5 bg-error text-on-error font-bold rounded-lg shadow-md transition-all flex items-center gap-2 ${isViewer || isBusy || blockedByBooking ? "opacity-50 cursor-not-allowed" : "hover:brightness-110 active:scale-95"}`
                   : `px-6 py-2.5 border border-outline-variant font-bold rounded-lg transition-all flex items-center gap-2 ${
-                      isViewer || isBusy || activatedKey != null
+                      isViewer || isBusy || blockedByBooking || activatedKey != null
                         ? "text-on-surface-variant opacity-50 cursor-not-allowed"
                         : "text-secondary hover:bg-surface-container-low hover:border-secondary active:scale-95"
                     }`
