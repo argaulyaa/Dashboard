@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { fetchProviders, fetchComponents, fetchActiveBooking } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
+import ConsoleTerminal from "../components/ConsoleTerminal.jsx";
 import { usePageHeader } from "../components/PageHeaderContext.jsx";
 
 // Data referensi Service Model E2 -- ini spesifikasi standar O-RAN, bukan
@@ -48,6 +49,7 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
   const [providerComponents, setProviderComponents] = useState(null);
   const [restartingId, setRestartingId] = useState(null);
   const [logTarget, setLogTarget] = useState(null);
+  const [consoleTarget, setConsoleTarget] = useState(null);
   const [hasBooking, setHasBooking] = useState(null);
   const isAdminRole = (()=>{ try{ return getRole()==="admin"; }catch{ return false; } })();
   const blockedByBooking = !isAdminRole && hasBooking===false;
@@ -224,7 +226,7 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
               hero?.host ? (
                 <button
                   className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-bold text-sm shadow-md transition-all ${blockedByBooking ? "bg-outline-variant text-white opacity-50 cursor-not-allowed" : "bg-primary text-white hover:bg-primary-container active:scale-95"}`}
-                  onClick={() => { if(blockedByBooking){ alert("Requires active booking — book a session at /reservations"); return; } onSelect(hero); }}
+                  onClick={() => { if(blockedByBooking){ alert("Requires active booking — book a session at /reservations"); return; } if(hero) setConsoleTarget({domain:"ric", compId: hero.id, provider: activeProvider || "oai", compName: hero.name}); }}
                   disabled={blockedByBooking}
                   title={blockedByBooking ? "Requires active booking — book a session at /reservations" : "Open terminal"}
                 >
@@ -243,6 +245,25 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
           </div>
         </div>
 
+        {consoleTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 backdrop-blur-sm" onClick={()=>setConsoleTarget(null)}>
+            <div className="bg-slate-900 border border-slate-700/60 text-slate-100 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[88vh] flex flex-col overflow-hidden" onClick={(e)=>e.stopPropagation()}>
+              <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-950 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center text-primary border border-primary/30">
+                    <span className="material-symbols-outlined">terminal</span>
+                  </div>
+                  <h3 className="font-bold text-sm sm:text-base text-white">Console • RIC {consoleTarget.compName}</h3>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">ric/{consoleTarget.provider}</span>
+                </div>
+                <button onClick={()=>setConsoleTarget(null)} className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">×</button>
+              </div>
+              <div className="flex-1 p-3 bg-[#0e1420] overflow-hidden">
+                <ConsoleTerminal domain={consoleTarget.domain} componentId={consoleTarget.compId} provider={consoleTarget.provider} host={hero?.host || "ric"} currentUser={currentUser} />
+              </div>
+            </div>
+          </div>
+        )}
         {logTarget && (
           <LogsModal
             domain={logTarget.domain}
