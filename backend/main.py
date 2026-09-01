@@ -1580,13 +1580,33 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
         await ws.close()
         return
 
-    await run_ssh_bridge(
-        ws,
-        host=component["host"],
-        port=int(init.get("port", 22)),
-        username=init.get("ssh_username", ""),
-        password=init.get("ssh_password", ""),
-    )
+    # JEK OAI ONLY: kalau Core OAI 5GC, arahkan console ke terminal pod deployment (bukan host shell biasa)
+    # host 10.91.2.156 adalah master K8s; pod OAI ada di ns 5g-core deployment oai-* . User tetap wajib reservasi (cek di atas).
+    is_oai_core = (domain == "core" and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP)
+    if is_oai_core:
+        # OAI 5GC: SSH ke master, lalu exec ke pod deployment (satu-satunya OAI, tidak sentuh open5gs)
+        oai_host = os.environ.get("OAI_K8S_SSH_HOST", "10.91.2.156")
+        oai_user = os.environ.get("OAI_K8S_SSH_USER", "telmat")
+        oai_pass = os.environ.get("OAI_K8S_SSH_PASSWORD", os.environ.get("K8S_SUDO_PASSWORD","123"))
+        # Kirim via run_ssh_bridge ke master, tapi set username/password dari env OAI (bukan dari form user)
+        # Form tetap dipakai untuk audit, tapi koneksi pakai kredensial OAI K8s yang valid
+        await run_ssh_bridge(
+            ws,
+            host=oai_host,
+            port=22,
+            username=oai_user,
+            password=oai_pass,
+            # initial command: exec ke pod OAI deployment (akan di-handle ssh_proxy sebagai shell + auto kirim kubectl exec)
+            initial_cmd=f"kubectl -n 5g-core exec -it deployment/oai-{comp_id} -- /bin/bash\n",
+        )
+    else:
+        await run_ssh_bridge(
+            ws,
+            host=component["host"],
+            port=int(init.get("port", 22)),
+            username=init.get("ssh_username", ""),
+            password=init.get("ssh_password", ""),
+        )
 
 # ---- Telemetry ----
 

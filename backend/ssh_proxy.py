@@ -41,7 +41,7 @@ def _reader_thread(channel, out_queue, stop_event):
     out_queue.put(None)
 
 
-async def run_ssh_bridge(ws: WebSocket, host: str, port: int, username: str, password: str):
+async def run_ssh_bridge(ws: WebSocket, host: str, port: int, username: str, password: str, initial_cmd: str = None):
     try:
         client, channel = await asyncio.get_event_loop().run_in_executor(
             None, _open_channel, host, port, username, password
@@ -68,6 +68,13 @@ async def run_ssh_bridge(ws: WebSocket, host: str, port: int, username: str, pas
                 break
 
     pump_task = asyncio.create_task(pump_ssh_to_ws())
+    # JEK OAI: kalau ada initial_cmd (kubectl exec), kirim otomatis setelah shell siap
+    if initial_cmd:
+        try:
+            await asyncio.sleep(0.8)
+            channel.send(initial_cmd)
+        except Exception:
+            pass
 
     try:
         while True:

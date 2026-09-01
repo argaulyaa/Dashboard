@@ -376,16 +376,18 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
           </div>
 
           <div className="mt-8 flex justify-end gap-3">
-            {/* 1) Console — dipindah ke kiri */}
-            {/* RBAC 2-role: user & admin sama-sama operator */}
+            {/* 1) Console — OAI 5GC only, wajib reservasi (Jek request) */}
+            {/* RBAC 2-role: user/admin operator, tapi user tanpa booking tidak bisa Console */}
             {(getRole() === "user" || getRole() === "admin") && (
               heroView.sshActive ? (
                 <button
-                  className="px-6 py-2.5 bg-primary text-white font-bold rounded-lg shadow-md hover:brightness-110 active:scale-95 transition-all flex items-center gap-2"
-                  onClick={() => hero && onSelect(hero)}
+                  className={`px-6 py-2.5 font-bold rounded-lg shadow-md flex items-center gap-2 transition-all ${blockedByBooking ? "bg-outline-variant text-white opacity-50 cursor-not-allowed" : "bg-primary text-white hover:brightness-110 active:scale-95"}`}
+                  onClick={() => !blockedByBooking && hero && onSelect(hero)}
+                  disabled={blockedByBooking}
+                  title={blockedByBooking ? "Requires active booking — book a session at /reservations" : "Open terminal for "+(activeProvider==="oai"?"OAI 5GC":""+activeProvider)+" "+(hero?.name||"")}
                 >
                   <span className="material-symbols-outlined text-lg">terminal</span>
-                  Console
+                  Console{activeProvider==="oai"?" • OAI": ""}
                 </button>
               ) : (
                 <button
