@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchMe } from "../auth.js";
 import { fetchRecentActivity } from "../api.js";
+import { getRole } from "../user.js";
 
 const DOMAIN_META = {
   core: { title: "Core", subtitle: "5G Core network functions", icon: "memory" },
@@ -156,22 +157,29 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
     return () => clearInterval(t);
   }, []);
 
-  // Recent Activity feed — real events from /api/activity/recent, poll 30s
+  // Recent Activity feed — admin-only (2026-09-01), poll 30s
+  const isAdmin = currentUser === "admin" || getRole() === "admin";
   const [recent, setRecent] = useState([]);
   useEffect(() => {
+    if (!isAdmin) return; // user biasa tidak boleh lihat Recent Activity
     let cancelled = false;
     async function load() {
       try {
         const rows = await fetchRecentActivity(5);
         if (!cancelled) setRecent(Array.isArray(rows) ? rows : []);
-      } catch {
-        // keep previous value on error (auth may not be ready)
+      } catch (e) {
+        // 403 for non-admin (backend require_admin) -> hide, keep previous value
+        if (String(e?.message || "").includes("403")) {
+          if (!cancelled) setRecent([]);
+          return;
+        }
+        // keep previous value on other errors (auth may not be ready)
       }
     }
     load();
     const id = setInterval(load, 30000);
     return () => { cancelled = true; clearInterval(id); };
-  }, []);
+  }, [isAdmin]);
 
   const allComponents = [
     ...(data.core || []).map((c) => ({ ...c, domain: "core" })),
@@ -301,7 +309,8 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
 
         </div>
 
-        {/* Recent Activity — full-width row spanning left to right */}
+        {/* Recent Activity — admin-only (2026-09-01): user biasa tidak boleh lihat */}
+        {isAdmin && (
         <div className="col-span-12">
           <div className="grid grid-cols-1">
             <div className="bg-white rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] overflow-hidden">
@@ -331,6 +340,7 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
   );
