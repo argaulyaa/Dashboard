@@ -67,7 +67,7 @@ export default function SshTerminal({ domain, componentId, host, currentUser, pr
     window.addEventListener("resize", handleResize);
   };
 
-  const isOaiAuto = provider==="oai" && domain==="core";
+  const isOaiAuto = (provider==="oai" || provider==="open5gs") && domain==="core";
   if (!connected) {
     if (isOaiAuto) {
       return (
