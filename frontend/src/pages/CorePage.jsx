@@ -227,7 +227,11 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
   // Provider yang sedang aktif secara eksplisit (atau null).
   const activatedKey = activeActivation?.provider || null;
   const activatedLabel = providers.find((p) => p.key === activatedKey)?.label || activatedKey;
-  const isActiveTab = activatedKey != null && activatedKey === activeProvider;
+  // SYNC FIX: tombol Activate/Deactivate sinkron dengan status ONLINE/OFFLINE (health), bukan cuma active_providers
+  // online = healthy/degraded dari pod K8s; kalau belum ada yang di-activate (null), ikut health biar ONLINE→Deactivate
+  const _healthForButton = (()=>{ try{return domainHealth(displayedComponents);}catch{return "down"} })();
+  const _isOnlineForButton = _healthForButton !== "down";
+  const isActiveTab = activatedKey != null ? (activatedKey === activeProvider) : _isOnlineForButton;
   const isBusy = activationBusy;
 
   // Current Operator — F2: sumber kebenaran = status AKTIVASI eksplisit
