@@ -3,7 +3,7 @@ import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
 
-export default function SshTerminal({ domain, componentId, host, currentUser }) {
+export default function SshTerminal({ domain, componentId, host, currentUser, provider }) {
   const containerRef = useRef(null);
   const [form, setForm] = useState({ ssh_username: "", ssh_password: "", port: 22 });
   const [connected, setConnected] = useState(false);
@@ -11,11 +11,17 @@ export default function SshTerminal({ domain, componentId, host, currentUser }) 
   const termRef = useRef(null);
 
   useEffect(() => {
+    // JEK OAI: auto-connect for OAI pod without manual form (still respects reservation gate on BE)
+    if (provider==="oai" && domain==="core") {
+      // delay to let term mount
+      const tid=setTimeout(()=>{ if(!connected) connect(); }, 400);
+      return () => { clearTimeout(tid); wsRef.current?.close(); termRef.current?.dispose(); };
+    }
     return () => {
       wsRef.current?.close();
       termRef.current?.dispose();
     };
-  }, []);
+  }, [provider, domain, componentId]);
 
   const connect = () => {
     const term = new Terminal({
@@ -31,11 +37,13 @@ export default function SshTerminal({ domain, componentId, host, currentUser }) 
     termRef.current = term;
 
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    const host =
+    const hostUrl =
       window.location.port === "5173"
         ? `${window.location.hostname}:8000`
         : window.location.host;
-    const urlParams = new URLSearchParams(window.location.search); const providerParam = urlParams.get("provider"); const wsUrl = `${proto}://${host}/ws/ssh/${domain}/${componentId}${providerParam ? `?provider=${providerParam}` : (domain==="core" ? "?provider=oai" : "")}`; const ws = new WebSocket(wsUrl);
+    const prov = provider || new URLSearchParams(window.location.search).get("provider") || (domain==="core" ? "oai" : "");
+    const wsUrl = `${proto}://${hostUrl}/ws/ssh/${domain}/${componentId}${prov ? `?provider=${prov}` : ""}`;
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -59,7 +67,13 @@ export default function SshTerminal({ domain, componentId, host, currentUser }) 
     window.addEventListener("resize", handleResize);
   };
 
+  const isOaiAuto = provider==="oai" && domain==="core";
   if (!connected) {
+    if (isOaiAuto) {
+      return (
+        <div ref={containerRef} className="w-full h-[400px] bg-[#0e1420] rounded-md" />
+      );
+    }
     return (
       <div className="flex flex-col gap-2.5 max-w-xs">
         <p className="text-xs text-dim leading-relaxed">

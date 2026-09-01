@@ -469,7 +469,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
               <div className="flex-1 p-3 bg-[#0e1420] overflow-hidden">
                 <ConsoleTerminal domain={consoleTarget.domain} componentId={consoleTarget.compId} host={`${consoleTarget.provider}-amf`} currentUser={currentUser} />
               </div>
-              <p className="px-5 py-2 text-[11px] text-on-surface-variant">Pod auto-discovery: ns 5g-core label app.kubernetes.io/name=oai-amf — gak hardcode hash. Jika pod not Running → terminal akan tampil "Pod not available".</p>
+              
             </div>
           </div>
         )}
