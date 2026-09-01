@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider, providerLabel, fetchActiveBooking } from "../api.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
+import ConsoleTerminal from "../components/ConsoleTerminal.jsx";
 import CoreRanConnectBar from "../components/CoreRanConnectBar.jsx";
 import { usePageHeader } from "../components/PageHeaderContext.jsx";
 
@@ -63,6 +64,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
   const [providerComponents, setProviderComponents] = useState(null);
   const [restartingId, setRestartingId] = useState(null);
   const [logTarget, setLogTarget] = useState(null);
+  const [consoleTarget, setConsoleTarget] = useState(null); // JEK: Console modal OAI AMF — pisah dari drawer detail
 
   // Provider core yang di-set AKTIF lewat backend (tabel active_providers).
   // Eksklusif: cuma ada satu row global, jadi nilainya satu provider atau null.
@@ -382,7 +384,13 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
               heroView.sshActive ? (
                 <button
                   className={`px-6 py-2.5 font-bold rounded-lg shadow-md flex items-center gap-2 transition-all ${blockedByBooking ? "bg-outline-variant text-white opacity-50 cursor-not-allowed" : "bg-primary text-white hover:brightness-110 active:scale-95"}`}
-                  onClick={() => !blockedByBooking && hero && onSelect(hero)}
+                  onClick={() => {
+                    if (blockedByBooking) return;
+                    if (!hero) return;
+                    // JEK: OAI only — langsung modal terminal pod AMF, bukan drawer detail
+                    if (activeProvider==="oai" && hero.id==="amf") setConsoleTarget({domain:"core", compId:"amf", provider:"oai", compName: hero.name});
+                    else onSelect(hero);
+                  }}
                   disabled={blockedByBooking}
                   title={blockedByBooking ? "Requires active booking — book a session at /reservations" : "Open terminal for "+(activeProvider==="oai"?"OAI 5GC":""+activeProvider)+" "+(hero?.name||"")}
                 >
@@ -450,6 +458,20 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
             provider={logTarget.provider}
             onClose={() => setLogTarget(null)}
           />
+        )}
+        {consoleTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={()=>setConsoleTarget(null)}>
+            <div className="bg-white rounded-2xl shadow-xl w-[92%] max-w-4xl h-[70vh] flex flex-col overflow-hidden" onClick={(e)=>e.stopPropagation()}>
+              <div className="flex justify-between items-center px-5 py-3 border-b border-outline-variant">
+                <h3 className="font-bold">Console • OAI AMF — {consoleTarget.compName} ({consoleTarget.provider})</h3>
+                <button onClick={()=>setConsoleTarget(null)} className="text-on-surface-variant hover:text-on-surface text-xl">×</button>
+              </div>
+              <div className="flex-1 p-3 bg-[#0e1420] overflow-hidden">
+                <ConsoleTerminal domain={consoleTarget.domain} componentId={consoleTarget.compId} host={`${consoleTarget.provider}-amf`} currentUser={currentUser} />
+              </div>
+              <p className="px-5 py-2 text-[11px] text-on-surface-variant">Pod auto-discovery: ns 5g-core label app.kubernetes.io/name=oai-amf — gak hardcode hash. Jika pod not Running → terminal akan tampil "Pod not available".</p>
+            </div>
+          </div>
         )}
 
         {/* Dialog konfirmasi switch eksklusif (F2): matikan provider aktif

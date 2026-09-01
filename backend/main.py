@@ -1588,7 +1588,8 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
 
     # JEK OAI ONLY: kalau Core OAI 5GC, arahkan console ke terminal pod deployment (bukan host shell biasa)
     # host 10.91.2.156 adalah master K8s; pod OAI ada di ns 5g-core deployment oai-* . User tetap wajib reservasi (cek di atas).
-    is_oai_core = (domain == "core" and (provider_q=="oai" or (not provider_q and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP)))
+    # JEK: OAI AMF pod auto-discovery via label — jangan hardcode pod hash, cari pod Running di ns dari CORE_RAN_MAP
+    is_oai_core = (domain == "core" and (provider_q=="oai" or (not provider_q and comp_id=="amf"))) and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP
     if is_oai_core:
         # OAI 5GC: SSH ke master, lalu exec ke pod deployment (satu-satunya OAI, tidak sentuh open5gs)
         oai_host = os.environ.get("OAI_K8S_SSH_HOST", "10.91.2.156")
@@ -1603,7 +1604,9 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
             username=oai_user,
             password=oai_pass,
             # initial command: exec ke pod OAI deployment (akan di-handle ssh_proxy sebagai shell + auto kirim kubectl exec)
-            initial_cmd=f"kubectl -n 5g-core exec -it deployment/oai-{comp_id} -- /bin/bash\n",
+                        ns_oai = CORE_RAN_MAP.get("oai", {}).get("ns", "5g-core")
+            initial_cmd=f"pod=$(kubectl -n {ns_oai} get pods -l app.kubernetes.io/name=oai-{comp_id} --field-selector=status.phase=Running -o jsonpath='{{{{.items[0].metadata.name}}}}' 2>/dev/null); if [ -z \"$pod\" ]; then echo \"Pod not available (ns {ns_oai} label oai-{comp_id} not Running)\"; else kubectl -n {ns_oai} exec -it $pod -- /bin/bash 2>/dev/null || kubectl -n {ns_oai} exec -it $pod -- /bin/sh; fi
+",
         )
     else:
         await run_ssh_bridge(
