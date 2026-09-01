@@ -1597,16 +1597,15 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
         oai_pass = os.environ.get("OAI_K8S_SSH_PASSWORD", os.environ.get("K8S_SUDO_PASSWORD","123"))
         # Kirim via run_ssh_bridge ke master, tapi set username/password dari env OAI (bukan dari form user)
         # Form tetap dipakai untuk audit, tapi koneksi pakai kredensial OAI K8s yang valid
+        ns_oai = CORE_RAN_MAP.get("oai", {}).get("ns", "5g-core")
+        initial_cmd = f"pod=$(kubectl -n {ns_oai} get pods -l app.kubernetes.io/name=oai-{comp_id} -o name 2>/dev/null | head -1 | cut -d/ -f2); if [ -z \"$pod\" ]; then echo \"Pod not available (ns {ns_oai} label oai-{comp_id} not Running)\"; else kubectl -n {ns_oai} exec -it $pod -- /bin/bash 2>/dev/null || kubectl -n {ns_oai} exec -it $pod -- /bin/sh; fi\n"
         await run_ssh_bridge(
             ws,
             host=oai_host,
             port=22,
             username=oai_user,
             password=oai_pass,
-            # initial command: exec ke pod OAI deployment (akan di-handle ssh_proxy sebagai shell + auto kirim kubectl exec)
-                        ns_oai = CORE_RAN_MAP.get("oai", {}).get("ns", "5g-core")
-            initial_cmd=f"pod=$(kubectl -n {ns_oai} get pods -l app.kubernetes.io/name=oai-{comp_id} --field-selector=status.phase=Running -o jsonpath='{{{{.items[0].metadata.name}}}}' 2>/dev/null); if [ -z \"$pod\" ]; then echo \"Pod not available (ns {ns_oai} label oai-{comp_id} not Running)\"; else kubectl -n {ns_oai} exec -it $pod -- /bin/bash 2>/dev/null || kubectl -n {ns_oai} exec -it $pod -- /bin/sh; fi
-",
+            initial_cmd=initial_cmd,
         )
     else:
         await run_ssh_bridge(
