@@ -458,7 +458,11 @@ def get_audit_logs(current_user: str = Depends(require_admin)):
 
 @app.get("/api/activity/recent")
 def get_recent_activity(limit: int = Query(default=5, ge=1, le=20), current_user: str = Depends(require_user)):
-    """Recent Activity feed — mixed real events. Spec: GET /api/activity/recent?limit=5 returns last 5-10. Auth required."""
+    """Recent Activity feed — mixed real events. Spec: GET /api/activity/recent?limit=5 returns last 5-10.
+
+    RBAC: visible to ALL authenticated users (role 'user' & 'admin').
+    Jangan ubah ke require_admin — audit-logs (/api/audit-logs) yang admin-only, Recent Activity beda.
+    """
     lim = max(1, min(int(limit or 5), 20))
     try:
         from models import ActivityLogModel2
