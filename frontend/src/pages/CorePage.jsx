@@ -542,7 +542,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
               <tr className="bg-surface-container-low text-[11px] uppercase tracking-wider font-bold text-on-surface-variant">
                 <th className="px-6 py-3">Service Name</th>
                 <th className="px-6 py-3">Status</th>
-                <th className="px-6 py-3">Throughput</th>
+                {activeProvider!=="oai" && <th className="px-6 py-3">Throughput</th>}
                 <th className="px-6 py-3">Port</th>
                 <th className="px-6 py-3 text-right">Action</th>
               </tr>
@@ -550,7 +550,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
             <tbody className="text-sm divide-y divide-outline-variant">
               {displayedComponents.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-6 text-center text-on-surface-variant text-xs font-mono">
+                  <td colSpan={activeProvider==="oai" ? 4 : 5} className="px-6 py-6 text-center text-on-surface-variant text-xs font-mono">
                     No component data available.
                   </td>
                 </tr>
@@ -568,13 +568,13 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
                   <td className={`px-6 py-4 text-xs font-bold ${STATUS_DOT[c.status] ?? "text-on-surface-variant"}`}>
                     ● {STATUS_LABEL[c.status] ?? c.status}
                   </td>
-                  <td className="px-6 py-4 font-mono text-xs"><span>{c.throughput_mbps ? `${c.throughput_mbps} Mbps` : "0 Mbps"}</span>{!c.throughput_mbps && <span className="text-[10px] text-on-surface-variant ml-1">(no data)</span>}</td>
+                  {activeProvider!=="oai" && <td className="px-6 py-4 font-mono text-xs"><span>{c.throughput_mbps ? `${c.throughput_mbps} Mbps` : "0 Mbps"}</span>{!c.throughput_mbps && <span className="text-[10px] text-on-surface-variant ml-1">(no data)</span>}</td>}
                   <td className="px-6 py-4 font-mono text-xs">{c.port ? c.port : ({amf:38412,smf:38412,upf:2152,nrf:8080,ausf:8080,udm:8080,udr:8080,mysql:3306}[c.id] || "—")}</td>
                   <td className="px-6 py-4 text-right">
                     <button
-                      className="text-primary hover:underline font-bold text-xs disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed"
-                      onClick={() => handleRestartRow(c.id)}
-                      disabled={restartingId === c.id || c.status === "restarting"}
+                      className={`font-bold text-xs ${activeProvider==="oai" && blockedByBooking ? "text-on-surface-variant opacity-50 cursor-not-allowed" : "text-primary hover:underline"} disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed`}
+                      onClick={() => { if (activeProvider==="oai" && blockedByBooking) { alert("Requires active booking — book a session at /reservations"); return; } handleRestartRow(c.id); }}
+                      disabled={restartingId === c.id || c.status === "restarting" || (activeProvider==="oai" && blockedByBooking)}
                       title=""
                     >
                       {restartingId === c.id || c.status === "restarting" ? "Restarting..." : "Restart"}
