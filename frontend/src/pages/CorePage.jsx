@@ -460,16 +460,21 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
           />
         )}
         {consoleTarget && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={()=>setConsoleTarget(null)}>
-            <div className="bg-white rounded-2xl shadow-xl w-[92%] max-w-4xl h-[70vh] flex flex-col overflow-hidden" onClick={(e)=>e.stopPropagation()}>
-              <div className="flex justify-between items-center px-5 py-3 border-b border-outline-variant">
-                <h3 className="font-bold">Console • OAI AMF — {consoleTarget.compName} ({consoleTarget.provider})</h3>
-                <button onClick={()=>setConsoleTarget(null)} className="text-on-surface-variant hover:text-on-surface text-xl">×</button>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 backdrop-blur-sm" onClick={()=>setConsoleTarget(null)}>
+            <div className="bg-slate-900 border border-slate-700/60 text-slate-100 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[88vh] flex flex-col overflow-hidden" onClick={(e)=>e.stopPropagation()}>
+              <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-950 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center text-primary border border-primary/30">
+                    <span className="material-symbols-outlined">terminal</span>
+                  </div>
+                  <h3 className="font-bold text-sm sm:text-base text-white">Console • OAI AMF</h3>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">core/oai</span>
+                </div>
+                <button onClick={()=>setConsoleTarget(null)} className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">×</button>
               </div>
               <div className="flex-1 p-3 bg-[#0e1420] overflow-hidden">
                 <ConsoleTerminal domain={consoleTarget.domain} componentId={consoleTarget.compId} provider={consoleTarget.provider} host={`${consoleTarget.provider}-amf`} currentUser={currentUser} />
               </div>
-              
             </div>
           </div>
         )}
