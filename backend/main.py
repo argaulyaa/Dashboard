@@ -1603,7 +1603,8 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
         # Kirim via run_ssh_bridge ke master, tapi set username/password dari env OAI (bukan dari form user)
         # Form tetap dipakai untuk audit, tapi koneksi pakai kredensial OAI K8s yang valid
         ns_oai = CORE_RAN_MAP.get("oai", {}).get("ns", "5g-core")
-        initial_cmd = f"pod=$(kubectl -n {ns_oai} get pods -l app.kubernetes.io/name=oai-{comp_id} -o name 2>/dev/null | head -1 | cut -d/ -f2); if [ -z \"$pod\" ]; then echo \"Pod not available (ns {ns_oai} label oai-{comp_id} not Running)\"; else kubectl -n {ns_oai} exec -it $pod -- /bin/bash 2>/dev/null || kubectl -n {ns_oai} exec -it $pod -- /bin/sh; fi\n"
+        # Use deployment exec — gak pakai label, hash pod auto (oai-amf-665df89489-wxfsd)
+        initial_cmd = f"kubectl -n {ns_oai} exec -it deployment/oai-{comp_id} -- /bin/bash 2>/dev/null || kubectl -n {ns_oai} exec -it deployment/oai-{comp_id} -- /bin/sh\n"
         await run_ssh_bridge(
             ws,
             host=oai_host,
