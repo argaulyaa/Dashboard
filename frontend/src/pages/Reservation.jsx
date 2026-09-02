@@ -104,18 +104,18 @@ export default function ReservationPage({ currentUser }) {
   const adminCounts = useMemo(() => {
     const c = { active: 0, upcoming: 0, done: 0 };
     allBookings.forEach((b) => {
-      if (b.status === "active") c.active += 1;
-      else if (b.status === "pending") c.upcoming += 1;
-      else if (["done", "cancelled", "rejected"].includes(b.status)) c.done += 1;
+      if (b.is_active) c.active += 1;
+      else if (b.status === "pending" && !b.is_expired) c.upcoming += 1;
+      else c.done += 1;
     });
     return c;
   }, [allBookings]);
 
   const filteredAllBookings = useMemo(() => {
     let list;
-    if (adminFilter === "active") list = allBookings.filter((b) => b.status === "active");
-    else if (adminFilter === "upcoming") list = allBookings.filter((b) => b.status === "pending");
-    else if (adminFilter === "done") list = allBookings.filter((b) => ["done", "cancelled", "rejected"].includes(b.status) || b.is_expired || b.effective_status === "expired");
+    if (adminFilter === "active") list = allBookings.filter((b) => b.is_active);
+    else if (adminFilter === "upcoming") list = allBookings.filter((b) => b.status === "pending" && !b.is_expired);
+    else if (adminFilter === "done") list = allBookings.filter((b) => !b.is_active && (b.status !== "pending" || b.is_expired));
     else list = [...allBookings];
     // newest on top for all tabs — start_at desc
     list.sort((a,b) => (b.start_at - a.start_at) || (b.created_at - a.created_at));
