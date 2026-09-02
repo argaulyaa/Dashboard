@@ -39,9 +39,10 @@ function statusBadge(s) {
   return map[s] || "bg-gray-100 text-gray-600";
 }
 function displayStatus(b) {
-  // kalau waktu selesai (end_at < now) dan bukan cancelled/rejected, tampil closed — bukan expired/done
-  if (b.is_expired || b.effective_status === "expired") return "closed";
+  // Prioritas: cancelled/rejected tetap — jangan jadi closed walau expired
+  if (b.status === "cancelled" || b.status === "rejected") return b.status;
   if (b.status === "done") return "closed";
+  if (b.is_expired || b.effective_status === "expired" || b.effective_status === "closed") return "closed";
   return b.status;
 }
 
