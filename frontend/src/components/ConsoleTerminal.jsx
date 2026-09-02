@@ -11,8 +11,8 @@ export default function SshTerminal({ domain, componentId, host, currentUser, pr
   const termRef = useRef(null);
 
   useEffect(() => {
-    // JEK OAI/open5gs/RIC: auto-connect for pod without manual form
-    if (((provider==="oai" || provider==="open5gs") && domain==="core") || domain==="ric") {
+    // JEK OAI/open5gs/RIC/RAN: auto-connect for pod/nr-softmodem without manual form
+    if (((provider==="oai" || provider==="open5gs") && domain==="core") || domain==="ric" || domain==="ran") {
       // delay to let term mount
       const tid=setTimeout(()=>{ if(!connected) connect(); }, 400);
       return () => { clearTimeout(tid); wsRef.current?.close(); termRef.current?.dispose(); };

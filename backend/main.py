@@ -1670,9 +1670,18 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
     # host 10.91.2.156 adalah master K8s; pod OAI ada di ns 5g-core deployment oai-* . User tetap wajib reservasi (cek di atas).
     # JEK: OAI AMF pod auto-discovery via label — jangan hardcode pod hash, cari pod Running di ns dari CORE_RAN_MAP
     is_core_pod = (domain == "core" and provider_q in ("oai","open5gs") and comp_id in (DEFAULT_OAI_K8S_COMPONENT_MAP if provider_q=="oai" else DEFAULT_OPEN5GS_K8S_COMPONENT_MAP)) or (domain == "core" and not provider_q and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP)
+    is_ran = (domain == "ran")
     is_ric_core = (domain == "ric")
     is_oai_core = is_core_pod
-    if is_ric_core:
+    if is_ran:
+        # RAN: SSH ke host RAN 10.91.2.152 (nr-softmodem/srsRAN gNB) — bukan K8s pod
+        ran_host = os.environ.get("OAI_SSH_RAN_HOST", os.environ.get("SRSRAN_SSH_HOST", "10.91.2.152"))
+        ran_user = os.environ.get("OAI_SSH_RAN_USER", os.environ.get("SRSRAN_SSH_USER", "ran")) or "ran"
+        ran_pass = os.environ.get("OAI_SSH_RAN_PASSWORD", os.environ.get("SRSRAN_SSH_PASSWORD", "telmat123")) or "telmat123"
+        # Auto attach to gNB screen/tmux if exists, else plain shell — biar langsung lihat nr-softmodem
+        initial_cmd = "if screen -ls 2>/dev/null | grep -q gnb; then echo \"[attaching to gNB screen]\"; screen -r gnb 2>&1 || screen -r 2>&1 || /bin/bash; elif tmux ls 2>/dev/null | grep -q gnb; then echo \"[attaching to gNB tmux]\"; tmux attach -t gnb 2>&1 || /bin/bash; else echo \"[RAN host $(hostname) — nr-softmodem log: /home/ran/oai-gnb.log or srsran.log]\"; /bin/bash; fi\n"
+        await run_ssh_bridge(ws, host=ran_host, port=22, username=ran_user, password=ran_pass, initial_cmd=initial_cmd)
+    elif is_ric_core:
         # RIC: SSH ke master, exec ke pod flexric-nearrt-ric di ns ric
         oai_host = os.environ.get("OAI_K8S_SSH_HOST", "10.91.2.156")
         oai_user = os.environ.get("OAI_K8S_SSH_USER", "telmat")
