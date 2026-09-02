@@ -862,13 +862,26 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
         ssh_user = os.environ.get("OAI_SSH_RAN_USER", os.environ.get("SRSRAN_SSH_USER", "ran")) or "ran"
         ssh_password = os.environ.get("OAI_SSH_RAN_PASSWORD", os.environ.get("SRSRAN_SSH_PASSWORD", "telmat123")) or "telmat123"
         sudo_password = ""
-        log_path = "/home/ran/srsgnb.log"
+        # Provider-aware log path — OAI vs srsRAN pisah file di 10.91.2.152 (biar tail gak campur)
+        if provider == "srsran":
+            log_path = "/home/ran/srsran.log"
+        else:
+            log_path = "/home/ran/oai-gnb.log"
         try:
             if hasattr(adapter, "_cfg") and isinstance(getattr(adapter, "_cfg"), dict):
-                log_path = adapter._cfg.get("log", log_path)
+                # adapter._cfg may hold provider-specific key
+                if provider == "srsran" and "srsran_log" in getattr(adapter, "_cfg"):
+                    log_path = adapter._cfg.get("srsran_log", log_path)
+                elif provider == "oai" and "oai_log" in getattr(adapter, "_cfg"):
+                    log_path = adapter._cfg.get("oai_log", log_path)
+                else:
+                    log_path = adapter._cfg.get("log", log_path)
         except Exception:
             pass
-        inner_cmd = f"tail -n {tail} -F {_sh_quote(log_path)} 2>&1 || tail -n {tail} -F /home/ran/gnb.log 2>&1 || tail -n {tail} -F /home/ran/*.log 2>&1"
+        if provider == "srsran":
+            inner_cmd = f"tail -n {tail} -F {_sh_quote(log_path)} 2>&1 || tail -n {tail} -F /home/ran/srs*.log 2>&1 || journalctl -u srsran -n {tail} -f 2>&1 || tail -n {tail} -F /home/ran/*.log 2>&1"
+        else:
+            inner_cmd = f"tail -n {tail} -F {_sh_quote(log_path)} 2>&1 || tail -n {tail} -F /home/ran/oai*.log 2>&1 || tail -n {tail} -F /home/ran/gnb.log 2>&1 || tail -n {tail} -F /home/ran/*.log 2>&1"
         mode = "ran"
     elif domain == "ric":
         # RIC live via K8s — kubectl logs -f deployment/flexric-nearrt-ric in ns ric (like Core)
