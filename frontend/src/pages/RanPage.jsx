@@ -361,7 +361,7 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
                 {(getRole() === "user" || getRole() === "admin") && (
                   <button
                     className={`px-6 py-2.5 font-bold rounded-lg shadow-md transition-all flex items-center gap-2 ${blockedByBooking || !hero?.host ? "bg-surface-variant text-on-surface-variant opacity-50 cursor-not-allowed" : "bg-primary text-white hover:brightness-110 active:scale-95"}`}
-                    onClick={() => { if(blockedByBooking){ alert("Requires active booking — book a session at /reservations"); return; } if(hero) setConsoleTarget({domain:"ran", compId: hero.id, provider: activeProvider, compName: hero.name}); }}
+                    onClick={() => { if(blockedByBooking){ alert("Requires active booking — book a session at /reservations"); return; } if(hero) setConsoleTarget({domain:"ran", compId: hero.id || hero.name || "gnb", provider: activeProvider, compName: hero.name}); }}
                     disabled={blockedByBooking || !hero?.host}
                     title={blockedByBooking ? "Requires active booking — book a session at /reservations" : ""}
                   >
@@ -373,7 +373,7 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
                 {/* 2) View Logs */}
                 <button
                   className="px-6 py-2.5 border border-outline-variant text-on-surface font-bold text-label-lg rounded-lg hover:bg-surface-container-highest transition-colors flex items-center gap-2"
-                  onClick={() => hero && setLogTarget({ domain: "ran", compId: hero.id, compName: hero.name, provider: activeProvider })}
+                  onClick={() => hero && setLogTarget({ domain: "ran", compId: hero.id || hero.name || "gnb", compName: hero.name, provider: activeProvider })}
                 >
                   <span className="material-symbols-outlined text-lg">subject</span>
                   View Logs
