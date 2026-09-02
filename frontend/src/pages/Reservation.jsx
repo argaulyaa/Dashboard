@@ -32,10 +32,17 @@ function statusBadge(s) {
     pending: "bg-amber-100 text-amber-800 border-amber-200",
     active: "bg-emerald-100 text-emerald-800 border-emerald-200",
     done: "bg-gray-100 text-gray-600 border-gray-200",
+    closed: "bg-gray-100 text-gray-600 border-gray-200",
     cancelled: "bg-red-100 text-red-700 border-red-200",
     rejected: "bg-red-100 text-red-700 border-red-200",
   };
   return map[s] || "bg-gray-100 text-gray-600";
+}
+function displayStatus(b) {
+  // kalau waktu selesai (end_at < now) dan bukan cancelled/rejected, tampil closed — bukan expired/done
+  if (b.is_expired || b.effective_status === "expired") return "closed";
+  if (b.status === "done") return "closed";
+  return b.status;
 }
 
 export default function ReservationPage({ currentUser }) {
@@ -57,6 +64,8 @@ export default function ReservationPage({ currentUser }) {
   const load = async () => {
     try {
       const mine = await fetchMyBookings();
+      // newest on top (start_at desc) — biar terbaru di atas kayak request
+      mine.sort((a,b) => (b.start_at - a.start_at) || (b.created_at - a.created_at));
       setMyBookings(mine);
       const act = mine.find((b) => b.is_active) || null;
       try {
@@ -144,7 +153,7 @@ export default function ReservationPage({ currentUser }) {
   return (
     <div className="max-w-[1600px] mx-auto space-y-6">
       <div>
-        <h2 className="font-headline-md text-headline-md text-on-surface">Reservation Booking</h2>
+        <h2 className="font-headline-md text-headline-md text-on-surface">Reservations</h2>
       </div>
 
       {/* Active Session — time & status only, no provider pick */}
@@ -205,7 +214,7 @@ export default function ReservationPage({ currentUser }) {
                     <td className="px-4 py-2 font-mono text-xs">{b.id}</td>
                     <td className="px-4 py-2">{formatTime(b.start_at)}</td>
                     <td className="px-4 py-2">{formatTime(b.end_at)}</td>
-                    <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs border font-bold ${statusBadge(b.status)}`}>{b.status}</span>{b.is_active && <span className="ml-2 text-xs font-bold text-emerald-600 animate-pulse">● ACTIVE {formatCountdown(b.remaining_seconds)}</span>}</td>
+                    <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs border font-bold ${statusBadge(displayStatus(b))}`}>{displayStatus(b)}</span>{b.is_active && <span className="ml-2 text-xs font-bold text-emerald-600 animate-pulse">● ACTIVE {formatCountdown(b.remaining_seconds)}</span>}</td>
                     <td className="px-4 py-2 font-mono text-xs">{b.is_active ? formatCountdown(b.remaining_seconds) : "-"}</td>
                     <td className="px-4 py-2 text-right">
                       {(b.status === "pending" || b.status === "active") && <button onClick={() => handleCancel(b.id)} className="px-3 py-1 border border-outline-variant rounded-lg text-xs font-bold hover:bg-surface-container">Cancel</button>}

@@ -10,7 +10,7 @@ const PAGE_TITLES = {
   "/core": "Core Network Management",
   "/ran": "Radio Access Network",
   "/ric": "RIC Management",
-  "/reservations": "Node Reservations",
+  "/reservations": "Reservations",
   "/profile": "Profile",
   "/audit-logs": "Audit Logs",
 };
