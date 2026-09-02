@@ -112,10 +112,14 @@ export default function ReservationPage({ currentUser }) {
   }, [allBookings]);
 
   const filteredAllBookings = useMemo(() => {
-    if (adminFilter === "active") return allBookings.filter((b) => b.status === "active");
-    if (adminFilter === "upcoming") return allBookings.filter((b) => b.status === "pending");
-    if (adminFilter === "done") return allBookings.filter((b) => ["done", "cancelled", "rejected"].includes(b.status));
-    return allBookings;
+    let list;
+    if (adminFilter === "active") list = allBookings.filter((b) => b.status === "active");
+    else if (adminFilter === "upcoming") list = allBookings.filter((b) => b.status === "pending");
+    else if (adminFilter === "done") list = allBookings.filter((b) => ["done", "cancelled", "rejected"].includes(b.status) || b.is_expired || b.effective_status === "expired");
+    else list = [...allBookings];
+    // newest on top for all tabs — start_at desc
+    list.sort((a,b) => (b.start_at - a.start_at) || (b.created_at - a.created_at));
+    return list;
   }, [allBookings, adminFilter]);
 
   const handleBook = async (e) => {
@@ -261,13 +265,13 @@ export default function ReservationPage({ currentUser }) {
                     <tr key={b.id}>
                       <td className="px-4 py-2 font-bold">{b.user}</td>
                       <td className="px-4 py-2 text-xs">{formatTime(b.start_at)} → {formatTime(b.end_at)}</td>
-                      <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs border font-bold ${statusBadge(b.status)}`}>{b.status}</span></td>
+                      <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs border font-bold ${statusBadge(displayStatus(b))}`}>{displayStatus(b)}</span></td>
                       <td className="px-4 py-2 text-right space-x-2">
                         {b.status === "pending" && <>
                           <button onClick={() => handleApprove(b.id)} className="px-3 py-1 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700">Approve</button>
                           <button onClick={() => handleReject(b.id)} className="px-3 py-1 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700">Reject</button>
                         </>}
-                        {(b.status === "pending" || b.status === "active") && <button onClick={() => handleCancel(b.id)} className="px-3 py-1 border rounded-lg text-xs font-bold hover:bg-surface-container">Cancel</button>}
+                        {b.status === "active" && <button onClick={() => handleCancel(b.id)} className="px-3 py-1 border rounded-lg text-xs font-bold hover:bg-surface-container">Cancel</button>}
                       </td>
                     </tr>
                   ))}
