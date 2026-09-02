@@ -34,8 +34,6 @@ DEFAULT_OPEN5GS_K8S_COMPONENT_MAP = {
     "mysql": "open5gs-mongodb",
 }
 import shlex
-import threading
-import queue as _queue
 import reservations
 from database import get_db_session
 from models import AuditLogModel, UserModel, ActiveProviderModel
@@ -903,7 +901,7 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
             # Send inner_cmd
             channel.send(inner_cmd + "\n")
             # Stream back via ws
-            import queue, threading
+            import queue
             out_q = queue.Queue()
             stop_ev = threading.Event()
             def _reader():
