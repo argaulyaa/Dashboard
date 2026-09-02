@@ -1632,11 +1632,19 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
         await ws.close()
         return
 
+    # RAN console uses host 10.91.2.152 directly (nr-softmodem) — allow bypass host check like RIC/core pod
+    _is_ran_ws = (domain == "ran")
+    _is_ric_ws = (domain == "ric")
     component = adapter.get(comp_id)
-    if not component or not component.get("host"):
+    if not _is_ran_ws and not _is_ric_ws and (not component or not component.get("host")):
         await ws.send_text("\r\n[component has no SSH host configured]\r\n")
         await ws.close()
         return
+    # For RAN/RIC without host in map, synthesize minimal component for later logic
+    if _is_ran_ws and (not component or not component.get("host")):
+        component = {"id": comp_id, "host": "10.91.2.152", "name": comp_id}
+    if _is_ric_ws and (not component or not component.get("host")):
+        component = {"id": comp_id, "host": "10.91.2.156", "name": comp_id}
 
     try:
         init_raw = await ws.receive_text()
