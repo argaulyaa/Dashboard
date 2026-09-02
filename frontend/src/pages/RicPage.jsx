@@ -355,9 +355,9 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
                     <td className="px-6 py-4 text-xs text-on-surface-variant">{c.detail || "-"}</td>
                     <td className="px-6 py-4 text-right">
                       <button
-                        className="text-primary hover:underline font-bold text-xs disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed"
-                        onClick={() => handleRestartRow(c.id)}
-                        disabled={restartingId === c.id || c.status === "restarting"}
+                        className={`font-bold text-xs ${blockedByBooking ? "text-on-surface-variant opacity-50 cursor-not-allowed" : "text-primary hover:underline"} disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed`}
+                        onClick={() => { if(blockedByBooking){ alert("Requires active booking — book a session at /reservations"); return; } handleRestartRow(c.id); }}
+                        disabled={restartingId === c.id || c.status === "restarting" || blockedByBooking}
                       >
                         {restartingId === c.id || c.status === "restarting" ? "Restarting..." : "Restart"}
                       </button>
