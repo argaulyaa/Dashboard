@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { fetchProviders, fetchComponents, getActiveProvider, activateProvider, deactivateProvider, providerLabel, fetchActiveBooking } from "../api.js";
 import { getRole } from "../user.js";
+import ConsoleTerminal from "../components/ConsoleTerminal.jsx";
 import LogsModal from "../components/LogsModal.jsx";
 import { usePageHeader } from "../components/PageHeaderContext.jsx";
 
@@ -66,6 +67,7 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
   const [providerComponents, setProviderComponents] = useState(null);
   const [restartingId, setRestartingId] = useState(null);
   const [logTarget, setLogTarget] = useState(null);
+  const [consoleTarget, setConsoleTarget] = useState(null);
 
   // Provider RAN yang di-set AKTIF lewat backend (tabel active_providers,
   // domain "ran"). Eksklusif per-domain: cuma satu provider atau null.
@@ -358,9 +360,10 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
                 {/* RBAC 2-role: user & admin sama-sama operator */}
                 {(getRole() === "user" || getRole() === "admin") && (
                   <button
-                    className="px-6 py-2.5 bg-primary text-white font-bold rounded-lg shadow-md hover:brightness-110 active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    onClick={() => hero && onSelect(hero)}
-                    disabled={!hero?.host}
+                    className={`px-6 py-2.5 font-bold rounded-lg shadow-md transition-all flex items-center gap-2 ${blockedByBooking || !hero?.host ? "bg-surface-variant text-on-surface-variant opacity-50 cursor-not-allowed" : "bg-primary text-white hover:brightness-110 active:scale-95"}`}
+                    onClick={() => { if(blockedByBooking){ alert("Requires active booking — book a session at /reservations"); return; } if(hero) setConsoleTarget({domain:"ran", compId: hero.id, provider: activeProvider, compName: hero.name}); }}
+                    disabled={blockedByBooking || !hero?.host}
+                    title={blockedByBooking ? "Requires active booking — book a session at /reservations" : ""}
                   >
                     <span className="material-symbols-outlined text-lg">terminal</span>
                     Console
@@ -413,6 +416,19 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
             </div>
           </div>
 
+          {consoleTarget && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm" onClick={()=>setConsoleTarget(null)}>
+              <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-6xl max-h-[85vh] flex flex-col overflow-hidden" onClick={e=>e.stopPropagation()}>
+                <div className="px-4 py-3 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+                  <h3 className="font-bold text-white flex items-center gap-2"><span className="material-symbols-outlined text-primary">terminal</span> Console • {consoleTarget.compName || "nr-softmodem"} <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-slate-400">{consoleTarget.provider}</span></h3>
+                  <button onClick={()=>setConsoleTarget(null)} className="p-2 hover:bg-slate-800 rounded-lg"><span className="material-symbols-outlined text-slate-400">close</span></button>
+                </div>
+                <div className="flex-1 p-2 bg-black min-h-[480px]">
+                  <ConsoleTerminal domain={consoleTarget.domain} compId={consoleTarget.compId} provider={consoleTarget.provider} onClose={()=>setConsoleTarget(null)} />
+                </div>
+              </div>
+            </div>
+          )}
           {logTarget && (
             <LogsModal
               domain={logTarget.domain}
