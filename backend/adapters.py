@@ -411,7 +411,7 @@ class SshDockerCoreAdapter(DockerCoreAdapter):
         name = self._map[comp_id]
         try:
             out, _ = self._exec(f"docker logs --tail {int(tail)} --timestamps {name}")
-            return out or "(tidak ada log)"
+            return out or "(none log)"
         except Exception as e:
             return f"[SSH Error] Gagal ambil log container '{name}': {e}"
 
@@ -506,7 +506,7 @@ class SshDockerCoreAdapter(DockerCoreAdapter):
         }
 
     def _exec(self, cmd: str):
-        """Jalankan command di node Core via paramiko (koneksi persistent)."""
+        """Jalankan command di node Core via paramiko (connections persistent)."""
         import paramiko
         conn = self._conn
         if conn is None or not conn.get_transport() or not conn.get_transport().is_active():
@@ -653,7 +653,7 @@ class KubectlOaiCoreAdapter:
                 f"{self._kctl()} -n {self._ns} logs --tail={int(tail)} "
                 f"--timestamps -l app={self._map[comp_id]}")
             return (out or "").strip() or (
-                err.strip() or f"(tidak ada log untuk {self._map[comp_id]})")
+                err.strip() or f"(none log untuk {self._map[comp_id]})")
         except Exception as e:
             return f"[SSH Error] Gagal ambil log '{comp_id}' via kubectl: {e}"
 
@@ -667,7 +667,7 @@ class KubectlOaiCoreAdapter:
                 f"--kubeconfig={self._kubeconfig}")
 
     def _exec(self, cmd: str):
-        """Jalankan command di node K8s via paramiko (koneksi persistent).
+        """Jalankan command di node K8s via paramiko (connections persistent).
 
         Password sudo dikirim via stdin (echo <pw> | sudo -S) — tidak pernah
         masuk argv proses maupun log. cmd TIDAK boleh berisi input user."""
@@ -1021,7 +1021,7 @@ class KubectlOpen5gsCoreAdapter:
             out2, err2 = self._exec(
                 f"{self._kctl()} -n {self._ns} logs --tail={int(tail)} "
                 f"--timestamps -l app={deploy}")
-            return (out2 or "").strip() or (err2.strip() or err.strip() or f"(tidak ada log untuk {deploy})")
+            return (out2 or "").strip() or (err2.strip() or err.strip() or f"(none log untuk {deploy})")
         except Exception as e:
             return f"[SSH Error] Gagal ambil log '{comp_id}' via kubectl: {e}"
 
@@ -1306,7 +1306,7 @@ class SshRanAdapter:
 
     Mendeteksi gNB yang sedang jalan — OAI nr-softmodem ATAU srsRAN (binary `gnb`)
     — lalu melaporkan status proses, uptime, CPU/RAM, konfig (band/freq/PRB/PLMN),
-    status koneksi N2 (SCTP 38412) dan E2 (SCTP 36421/36422), plus perkiraan UE
+    status connections N2 (SCTP 38412) dan E2 (SCTP 36421/36422), plus perkiraan UE
     dari log gNB. Semua data nyata dari mesin, bukan simulasi.
 
     Konfigurasi via .env:
@@ -1346,7 +1346,7 @@ class SshRanAdapter:
         log = self._cfg.get("log", "/home/ran/srsgnb.log")
         try:
             out, _ = self._exec(f"tail -n {int(tail)} {log}")
-            return out or "(tidak ada log)"
+            return out or "(none log)"
         except Exception as e:
             return f"[SSH Error] Gagal ambil log gNB: {e}"
 
@@ -1402,7 +1402,7 @@ class SshRanAdapter:
                 n2_ip = ln.split("|", 1)[1] or ""
 
         if not proc:
-            self._cache["gnb"] = self._down("gNB tidak jalan (nr-softmodem/srsRAN tidak ditemukan di RAN)")
+            self._cache["gnb"] = self._down("gNB not running (nr-softmodem/srsRAN process not found on RAN host 10.91.2.152)")
             return
 
         # Ambil config gNB (cache per identity: type + args)
@@ -1412,8 +1412,8 @@ class SshRanAdapter:
             self._cfg = self._fetch_config(gtype, proc["args"])
             self._cfg["_sig"] = signature
 
-        n2_desc = n2_ip if n2_ip else f"{n2_count} koneksi"
-        e2_desc = f"{e2_count} sesi E2" if e2_count else "tidak ada"
+        n2_desc = n2_ip if n2_ip else f"{n2_count} connections"
+        e2_desc = f"{e2_count} E2 sessions" if e2_count else "none"
         # Uptime: prefer systemctl (jika ada service), fallback ke ps etime — fallback 0 jika gagal
         uptime = self._get_systemd_uptime() or self._parse_etime(proc["etime"])
         mem_gb = proc["rss_kb"] / (1024 * 1024)
@@ -1675,7 +1675,7 @@ class SrsRanSshAdapter(SshRanAdapter):
                 n2_ip = ln.split("|", 1)[1] or ""
 
         if not proc:
-            self._cache["gnb"] = self._down("srsRAN gNB tidak jalan (proses 'gnb' tidak ditemukan di RAN)")
+            self._cache["gnb"] = self._down("srsRAN gNB not running (process 'gnb' not found on RAN host 10.91.2.152)")
             return
 
         signature = f"{gtype}::{proc['args']}"
@@ -1683,8 +1683,8 @@ class SrsRanSshAdapter(SshRanAdapter):
             self._cfg = self._fetch_config(gtype, proc["args"])
             self._cfg["_sig"] = signature
 
-        n2_desc = n2_ip if n2_ip else f"{n2_count} koneksi"
-        e2_desc = f"{e2_count} sesi E2" if e2_count else "tidak ada"
+        n2_desc = n2_ip if n2_ip else f"{n2_count} connections"
+        e2_desc = f"{e2_count} E2 sessions" if e2_count else "none"
         uptime = self._get_systemd_uptime() or self._parse_etime(proc["etime"])
         mem_gb = proc["rss_kb"] / (1024 * 1024)
         mem_total = 15.9
@@ -1839,9 +1839,9 @@ class SshRicAdapter:
         try:
             # cek beberapa lokasi log umum
             out, _ = self._exec(
-                "tail -n {t} ~/ric-script.log 2>/dev/null || tail -n {t} /var/log/flexric.log 2>/dev/null || journalctl -u flexric --no-pager -n {t} 2>/dev/null || echo '(tidak ada log)'".format(t=int(tail))
+                "tail -n {t} ~/ric-script.log 2>/dev/null || tail -n {t} /var/log/flexric.log 2>/dev/null || journalctl -u flexric --no-pager -n {t} 2>/dev/null || echo '(none log)'".format(t=int(tail))
             )
-            return (out or "").strip() or "(tidak ada log)"
+            return (out or "").strip() or "(none log)"
         except Exception as e:
             return f"[SSH Error] Gagal ambil log RIC: {e}"
 
@@ -1907,7 +1907,7 @@ class SshRicAdapter:
                 ping_raw = ln.split("|", 1)[1] if "|" in ln else ""
 
         if not proc:
-            self._cache = {"ric": self._down("FlexRIC nearRT-RIC tidak jalan (proses 'nearRT-RIC' tidak ditemukan) — coba systemctl start flexric")}
+            self._cache = {"ric": self._down("FlexRIC nearRT-RIC not running (process 'nearRT-RIC' not found) — try systemctl start flexric")}
             return
 
         # uptime: prefer systemd ActiveEnterTimestamp else ps etime
@@ -2141,7 +2141,7 @@ class KubectlRicAdapter:
             if out2.strip():
                 return out2.strip()
             out3, err3 = self._exec(f"{self._kctl()} -n {self._ns} logs --tail={int(tail)} --timestamps -l k8s-app=flexric 2>&1")
-            return (out3 or "").strip() or (err3.strip() or err2.strip() or err.strip() or "(tidak ada log)")
+            return (out3 or "").strip() or (err3.strip() or err2.strip() or err.strip() or "(none log)")
         except Exception as e:
             return f"[SSH Error] Gagal ambil log RIC via kubectl: {e}"
 
