@@ -252,7 +252,7 @@ export default function LogsModal({ domain, compId, compName, provider, onClose 
           <div className="flex items-center gap-3 text-[11px] font-mono shrink-0 flex-wrap">
             <span className="text-slate-400 whitespace-nowrap">Showing <b className="text-slate-200">{filteredLines.length}</b> of {lines.length} lines</span>
             {filteredLines.length !== lines.length && <span className="text-amber-400/80 whitespace-nowrap">filtered</span>}
-            <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold whitespace-nowrap ${live ? (wsStatus === "connected" ? "bg-emerald-950/50 text-emerald-300 border-emerald-800" : "bg-amber-950/40 text-amber-300 border-amber-800") : "bg-slate-800 text-slate-400 border-slate-700"}`}>WS:{wsStatus}</span>
+            <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold whitespace-nowrap ${live ? (wsStatus === "connected" ? "bg-emerald-950/50 text-emerald-300 border-emerald-800" : wsStatus==="disconnected" ? "bg-slate-800 text-slate-400 border-slate-700" : "bg-amber-950/40 text-amber-300 border-amber-800") : "bg-slate-800 text-slate-400 border-slate-700"}`}>WS:{wsStatus}</span>
           </div>
         </div>
 

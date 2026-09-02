@@ -870,6 +870,69 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
             pass
         inner_cmd = f"tail -n {tail} -F {_sh_quote(log_path)} 2>&1 || tail -n {tail} -F /home/ran/gnb.log 2>&1 || tail -n {tail} -F /home/ran/*.log 2>&1"
         mode = "ran"
+    elif domain == "ric":
+        # RIC live via K8s — kubectl logs -f deployment/flexric-nearrt-ric in ns ric (like Core)
+        ssh_host = os.environ.get("RIC_K8S_SSH_HOST", os.environ.get("OAI_K8S_SSH_HOST", "10.91.2.156"))
+        ssh_port = int(os.environ.get("RIC_K8S_SSH_PORT", "22") or 22)
+        ssh_user = os.environ.get("RIC_K8S_SSH_USER", os.environ.get("OAI_K8S_SSH_USER", "telmat")) or "telmat"
+        ssh_password = os.environ.get("RIC_K8S_SSH_PASSWORD", os.environ.get("OAI_K8S_SSH_PASSWORD", "123")) or "123"
+        kubeconfig = os.environ.get("RIC_K8S_ADMIN_CONF", "/etc/kubernetes/admin.conf")
+        namespace = os.environ.get("RIC_K8S_NAMESPACE", "ric")
+        kctl = f"KUBECONFIG={kubeconfig} kubectl"
+        prefix = "flexric-nearrt-ric"
+        # Use deployment logs -f for live
+        inner_cmd = (
+            f"{kctl} -n {namespace} logs -f --tail={tail} --timestamps deployment/{prefix} 2>&1 || "
+            f"{kctl} -n {namespace} logs -f --tail={tail} --timestamps $({kctl} -n {namespace} get pods -o name 2>/dev/null | grep flexric | head -1 | cut -d/ -f2) 2>&1"
+        )
+        ssh_host, ssh_port, ssh_user, ssh_password, kubeconfig, namespace, inner_cmd, mode = ssh_host, ssh_port, ssh_user, ssh_password, kubeconfig, namespace, inner_cmd, "k8s"
+        # fall through to k8s handling below — set variables and let common k8s executor run
+        # To avoid duplicating k8s executor, just set mode and let next block handle? For now, handle directly here via ssh_proxy k8s mode
+        # Reuse k8s mode by jumping to k8s execution (duplicate logic below)
+        import asyncio as _asyncio
+        # Instead of duplicating, just handle k8s exec here inline (simple: run via ssh_proxy)
+        from ssh_proxy import run_ssh_bridge as _run_k8s
+        # Use k8s mode variables already set, will be handled by generic k8s runner below — to keep simple, just set and continue to generic k8s block
+        # For now, handle RIC as k8s by setting inner_cmd and falling through to k8s executor via goto-like: we will directly run k8s bridge here
+        try:
+            # Use ssh_proxy k8s bridge directly
+            from ssh_proxy import run_ssh_bridge
+            # Need to run k8s logs via SSH to master
+            # Use same pattern as core k8s: ssh to master and run inner_cmd
+            client, channel = await _asyncio.get_event_loop().run_in_executor(None, lambda: __import__("ssh_proxy")._open_channel(ssh_host, ssh_port, ssh_user, ssh_password))
+            # Send inner_cmd
+            channel.send(inner_cmd + "\n")
+            # Stream back via ws
+            import queue, threading
+            out_q = queue.Queue()
+            stop_ev = threading.Event()
+            def _reader():
+                while not stop_ev.is_set():
+                    try:
+                        if channel.recv_ready():
+                            d=channel.recv(4096)
+                            if not d: break
+                            out_q.put(d)
+                        else:
+                            stop_ev.wait(0.05)
+                        if channel.closed: break
+                    except: break
+                out_q.put(None)
+            th=threading.Thread(target=_reader, daemon=True)
+            th.start()
+            while True:
+                d=await _asyncio.get_event_loop().run_in_executor(None, out_q.get)
+                if d is None: break
+                await ws.send_text(d.decode(errors="replace"))
+            stop_ev.set()
+            try: channel.close(); client.close()
+            except: pass
+            await ws.close()
+            return
+        except Exception as e:
+            await ws.send_text(f"[RIC log error: {e}]\n")
+            await ws.close()
+            return
     else:
         # RIC / mock — no live backend, fallback to snapshot via REST (send once and close)
         try:
