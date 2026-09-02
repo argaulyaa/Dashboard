@@ -218,6 +218,9 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
     ip: hero?.host || "-",
     cpuPct: hero?.cpu_pct ?? 0,
     memGb: hero?.mem_gb ?? 0,
+    // MiB for rollback-friendly display — 0.00 GB (5Mi) => 5 MiB
+    memMiB: hero?.mem_gb != null ? Math.round(hero.mem_gb * 1024) : 0,
+    memDisplay: hero?.mem_gb != null ? (hero.mem_gb >= 1 ? `${hero.mem_gb} GB` : `${Math.round(hero.mem_gb * 1024)} MiB`) : "-" ,
     memPct: hero?.mem_pct ?? 0,
     sshActive: !!hero?.host,
     operator: hero?.reservation?.user || "-",
@@ -366,7 +369,7 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
             <div className="bg-surface-bright rounded-xl p-4 border border-outline-variant">
               <div className="flex justify-between items-end mb-2">
                 <p className="text-sm font-bold">Memory (RAM)</p>
-                <p className="text-2xl font-bold text-primary">{heroView.memGb} GB</p>
+                <p className="text-2xl font-bold text-primary">{heroView.memDisplay}</p>
               </div>
               <div className="w-full bg-surface-container rounded-full h-2">
                 <div
