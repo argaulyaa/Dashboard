@@ -424,7 +424,7 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
                   <button onClick={()=>setConsoleTarget(null)} className="p-2 hover:bg-slate-800 rounded-lg"><span className="material-symbols-outlined text-slate-400">close</span></button>
                 </div>
                 <div className="flex-1 p-2 bg-black min-h-[480px]">
-                  <ConsoleTerminal domain={consoleTarget.domain} compId={consoleTarget.compId} provider={consoleTarget.provider} onClose={()=>setConsoleTarget(null)} />
+                  <ConsoleTerminal domain={consoleTarget.domain} compId={consoleTarget.compId} provider={consoleTarget.provider} currentUser={currentUser} host="10.91.2.152" onClose={()=>setConsoleTarget(null)} />
                 </div>
               </div>
             </div>

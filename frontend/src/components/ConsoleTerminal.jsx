@@ -4,6 +4,10 @@ import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
 
 export default function SshTerminal({ domain, componentId, host, currentUser, provider }) {
+  // Fallback: if parent forgot currentUser, read from auth token (like CorePage does)
+  try { if(!currentUser){ const m=require("../user.js"); const u=m.getUser?.(); if(u?.username) currentUser=u.username; else if(u?.user) currentUser=u.user; } } catch {}
+  try { if(!currentUser) { const t=localStorage.getItem("user"); if(t) currentUser=t; } } catch {}
+  try { if(!currentUser) { const j=JSON.parse(localStorage.getItem("oran_user")||"null"); if(j?.username) currentUser=j.username; } } catch {}
   const containerRef = useRef(null);
   const [form, setForm] = useState({ ssh_username: "", ssh_password: "", port: 22 });
   const [connected, setConnected] = useState(false);
