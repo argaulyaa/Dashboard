@@ -138,7 +138,8 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
   // Provider yang sedang aktif secara eksplisit (atau null).
   const activatedKey = activeActivation?.provider || null;
   const activatedLabel = providers.find((p) => p.key === activatedKey)?.label || activatedKey;
-  const isActiveTab = activatedKey != null && activatedKey === activeProvider;
+  // Fallback kayak Core: Active/Critical (gNB ada) => Deactivate, Offline (no gNB) => Activate
+  const isActiveTab = activatedKey != null ? activatedKey === activeProvider : displayedComponents.length > 0;
   const isBusy = activationBusy;
 
   // Current Operator RAN — F3: sumber kebenaran = status AKTIVASI eksplisit
