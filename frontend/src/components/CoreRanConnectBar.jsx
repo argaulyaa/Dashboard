@@ -204,7 +204,16 @@ export default function CoreRanConnectBar() {
           <select value={coreSel} onChange={(e) => setCoreSel(e.target.value)} disabled={blocked} className={`px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm font-medium ${blocked ? "opacity-50 cursor-not-allowed" : ""}`}>
             {coreProviders.map((p) => <option key={p.key} value={p.key}>{p.label} ({p.key})</option>)}
           </select>
-          <span className="text-on-surface-variant">↔</span>
+          {/* Panah konektivitas Core<->RAN: label interface 3GPP di bawahnya.
+              N2 = signaling gNB<->AMF (SCTP 38412), N3 = user plane gNB<->UPF
+              (GTP-U UDP 2152). Tooltip (title) jelaskan lengkap saat hover. */}
+          <span
+            className="flex flex-col items-center leading-none px-1 cursor-help"
+            title="N2 — signaling gNB ↔ AMF (SCTP 38412)\nN3 — user plane gNB ↔ UPF (GTP-U, UDP 2152)"
+          >
+            <span className="text-on-surface-variant text-base">↔</span>
+            <span className="text-[9px] font-bold text-on-surface-variant tracking-tight mt-0.5">N2/N3</span>
+          </span>
           <select value={ranSel} onChange={(e) => setRanSel(e.target.value)} disabled={blocked} className={`px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm font-medium ${blocked ? "opacity-50 cursor-not-allowed" : ""}`}>
             {ranProviders.length ? ranProviders.map((p) => <option key={p.key} value={p.key}>{p.label} ({p.key})</option>) : ["oai","srsran"].map((k) => <option key={k} value={k}>{k}</option>)}
           </select>
