@@ -155,6 +155,28 @@ DEFAULT_OAI_K8S_COMPONENT_MAP = {
 # Pemetaan default open5gs: helm chart open5gs-chart -> open5gs-amf
 # Label K8s: app.kubernetes.io/name=<comp_id> (e.g. amf), app.kubernetes.io/instance=open5gs-chart
 # Bisa dioverride via env OPEN5GS_K8S_COMPONENT_MAP (JSON).
+# Pemetaan comp_id -> nama unit systemd Open5GS bare-metal (node `core`,
+# 10.91.2.151). Dipakai SshSystemdCoreAdapter. Bisa dioverride via env
+# OPEN5GS_SYSTEMD_UNITS (JSON) tanpa ubah kode.
+DEFAULT_OPEN5GS_SYSTEMD_UNITS = {
+    "amf": "open5gs-amfd", "smf": "open5gs-smfd", "upf": "open5gs-upfd",
+    "nrf": "open5gs-nrfd", "ausf": "open5gs-ausfd", "udm": "open5gs-udmd",
+    "udr": "open5gs-udrd", "pcf": "open5gs-pcfd", "nssf": "open5gs-nssfd",
+    "scp": "open5gs-scpd", "bsf": "open5gs-bsfd",
+}
+
+# Port SBI/N-interface per NF — hanya untuk tampilan "port" di kartu,
+# bukan diverifikasi listening (itu dicek terpisah untuk amf/smf/upf).
+OPEN5GS_NF_PORT = {
+    "amf": 38412, "smf": 8805, "upf": 2152, "nrf": 7777, "ausf": 7777,
+    "udm": 7777, "udr": 7777, "pcf": 7777, "nssf": 7777, "scp": 7777, "bsf": 7777,
+}
+OPEN5GS_NF_LABEL = {
+    "amf": "AMF", "smf": "SMF", "upf": "UPF", "nrf": "NRF", "ausf": "AUSF",
+    "udm": "UDM", "udr": "UDR", "pcf": "PCF", "nssf": "NSSF", "scp": "SCP", "bsf": "BSF",
+}
+
+
 DEFAULT_OPEN5GS_K8S_COMPONENT_MAP = {
     "amf": "open5gs-amf",
     "smf": "open5gs-smf",
@@ -2069,6 +2091,321 @@ class SshRicAdapter:
             return f"{secs}s"
 
 
+class SshSystemdCoreAdapter:
+    """Adapter Core real — Open5GS bare-metal (systemd) via SSH ke 10.91.2.151.
+
+    Dipakai ketika testbed Core menjalankan Open5GS langsung di OS (systemd),
+    bukan Docker maupun Kubernetes — kondisi aktual per 3 Nov 2026 (lihat
+    DOKUMENTASI-PROYEK-DASHBOARD-ORAN-KONTEKS-AGENT.md §4.5). Mengikuti pola
+    SshRicAdapter: satu round-trip SSH per refresh (cache TTL), tanpa state
+    tersimpan selain koneksi paramiko yang dipakai ulang.
+
+    Per comp_id (lihat DEFAULT_OPEN5GS_SYSTEMD_UNITS) dibaca:
+      - systemctl is-active <unit>       -> status proses
+      - systemctl show <unit> --property=ActiveEnterTimestamp,MainPID -> uptime + PID
+      - ps -p <PID> -o %cpu,rss          -> cpu/mem (kalau PID ada)
+    Plus satu kali per refresh (bukan per-NF):
+      - ss -tlnp | grep 38412            -> AMF benar-benar listen (bukan cuma 'active')
+      - ss -ulnp | grep 2152             -> UPF GTP-U listen
+      - free -m                          -> total memory host untuk mem_pct
+
+    Kontrak sama dengan BaseAdapter: list/get/restart/jitter_health/get_logs.
+    Status:
+      healthy    = systemd active (+ listen socket untuk amf/upf kalau relevan)
+      degraded   = systemd active tapi socket yang diharapkan tidak listen
+      down       = systemd inactive/failed atau proses tidak ditemukan
+      restarting = sedang diproses restart() dari dashboard
+    Field yang belum ada sumbernya (throughput_mbps, latency_ms, active_ues)
+    sengaja dibiarkan 0 — bukan data karangan (lihat AGENTS.md).
+    host = IP node Core (10.91.2.151) agar Console SSH & restart bisa dipakai.
+    """
+
+    CACHE_TTL = 2.5
+
+    def __init__(self, ssh_host: str, ssh_user: str, ssh_password: str = "",
+                 ssh_port: int = 22, units: Optional[dict] = None,
+                 sudo_password: str = "", ssh_key_path: Optional[str] = None):
+        self._ssh = {"host": ssh_host, "port": int(ssh_port), "user": ssh_user,
+                     "password": ssh_password, "key_path": ssh_key_path}
+        self._sudo_password = sudo_password or ssh_password
+        self._units = dict(units or DEFAULT_OPEN5GS_SYSTEMD_UNITS)
+        self._conn = None
+        self._cache: dict = {}
+        self._last_fetch = 0.0
+
+    # kontrak adapter -------------------------------------------------------
+    def list(self) -> List[dict]:
+        self._maybe_refresh()
+        # urutan tetap sesuai DEFAULT_OPEN5GS_SYSTEMD_UNITS supaya UI stabil
+        return [self._cache[cid] for cid in self._units if cid in self._cache]
+
+    def get(self, comp_id: str) -> Optional[dict]:
+        self._maybe_refresh()
+        return self._cache.get(comp_id)
+
+    async def restart(self, comp_id: str) -> Optional[dict]:
+        unit = self._units.get(comp_id)
+        if not unit:
+            return None
+        try:
+            cmd = (
+                f"echo '{self._sudo_password}' | sudo -S systemctl restart {unit} 2>&1; "
+                f"echo __RC__$?"
+            )
+            self._exec(cmd)
+        except Exception as e:
+            print(f"[SshSystemdCoreAdapter] restart {unit} gagal: {e}", flush=True)
+        self._last_fetch = 0
+        await asyncio.sleep(1.5)
+        result = self.get(comp_id)
+        if result:
+            result = dict(result)
+            if result.get("status") != "down":
+                result["status"] = "restarting"
+                result["detail"] = f"Restart requested via SSH (systemctl restart {unit})"
+            result["last_updated"] = time.time()
+            self._cache[comp_id] = result
+        return result
+
+    def jitter_health(self):
+        pass
+
+    def get_logs(self, comp_id: str, tail: int = 100) -> str:
+        unit = self._units.get(comp_id)
+        if not unit:
+            return f"Component '{comp_id}' not found."
+        try:
+            out, _ = self._exec(f"journalctl -u {unit} --no-pager -n {int(tail)} 2>/dev/null || echo '(none log)'")
+            return (out or "").strip() or "(none log)"
+        except Exception as e:
+            return f"[SSH Error] Gagal ambil log {unit}: {e}"
+
+    # helpers ---------------------------------------------------------------
+    def _maybe_refresh(self):
+        now = time.time()
+        if now - self._last_fetch < self.CACHE_TTL:
+            return
+        self._last_fetch = now
+
+        unit_list = list(self._units.values())
+        # satu perintah gabungan: status tiap unit + listen socket + mem total
+        parts = []
+        for cid, unit in self._units.items():
+            parts.append(
+                f"echo \"ACTIVE|{cid}|$(systemctl is-active {unit} 2>/dev/null)\"; "
+                f"p=$(systemctl show {unit} --property=MainPID 2>/dev/null | cut -d= -f2); "
+                f"echo \"PID|{cid}|$p\"; "
+                f"t=$(systemctl show {unit} --property=ActiveEnterTimestamp 2>/dev/null); "
+                f"echo \"TS|{cid}|$t\"; "
+                f"if [ -n \"$p\" ] && [ \"$p\" != \"0\" ]; then "
+                f"echo \"PS|{cid}|$(ps -p $p -o %cpu=,rss= 2>/dev/null)\"; fi"
+            )
+        cmd = (
+            "; ".join(parts)
+            # AMF (N2/NGAP) adalah SCTP, bukan TCP -> ss --sctp (pola sama dengan
+            # SshRicAdapter untuk E2 36421). UPF (N3/GTP-U) adalah UDP -> ss -ulnp.
+            + "; echo \"LISTEN_AMF|$(ss --sctp -an 2>/dev/null | grep -c ':38412 ')\""
+            + "; echo \"LISTEN_UPF|$(ss -uln 2>/dev/null | grep -c ':2152 ')\""
+            + "; echo \"MEMTOT|$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')\""
+        )
+        try:
+            out, _ = self._exec(cmd)
+        except Exception as e:
+            print(f"[SshSystemdCoreAdapter] SSH ke {self._ssh['host']} gagal: {e}", flush=True)
+            self._cache = {cid: self._down(cid, f"SSH ke node Core gagal: {e}") for cid in self._units}
+            return
+
+        active: dict = {}
+        pid: dict = {}
+        ts: dict = {}
+        ps: dict = {}
+        listen_amf = 0
+        listen_upf = 0
+        mem_total_m = 0
+        for ln in out.splitlines():
+            ln = ln.strip()
+            if not ln or "|" not in ln:
+                continue
+            try:
+                tag, rest = ln.split("|", 1)
+            except ValueError:
+                continue
+            if tag == "ACTIVE":
+                cid, val = rest.split("|", 1)
+                active[cid] = val.strip()
+            elif tag == "PID":
+                cid, val = rest.split("|", 1)
+                pid[cid] = val.strip()
+            elif tag == "TS":
+                cid, val = rest.split("|", 1)
+                ts[cid] = val.strip()
+            elif tag == "PS":
+                cid, val = rest.split("|", 1)
+                ps[cid] = val.strip()
+            elif tag == "LISTEN_AMF":
+                try:
+                    listen_amf = int(rest.strip() or 0)
+                except Exception:
+                    listen_amf = 0
+            elif tag == "LISTEN_UPF":
+                try:
+                    listen_upf = int(rest.strip() or 0)
+                except Exception:
+                    listen_upf = 0
+            elif tag == "MEMTOT":
+                try:
+                    mem_total_m = int(rest.strip() or 0)
+                except Exception:
+                    mem_total_m = 0
+
+        mem_total_gb = (mem_total_m / 1024) if mem_total_m else 0.0
+        new_cache = {}
+        for cid, unit in self._units.items():
+            is_active = active.get(cid, "") == "active"
+            if not is_active:
+                new_cache[cid] = self._down(cid, f"systemd unit '{unit}' is {active.get(cid) or 'unknown'}")
+                continue
+
+            cpu_pct = 0.0
+            mem_gb = 0.0
+            ps_raw = ps.get(cid, "")
+            if ps_raw:
+                bits = ps_raw.split()
+                if len(bits) >= 2:
+                    cpu_pct = self._to_float(bits[0])
+                    mem_gb = self._to_float(bits[1]) / (1024 * 1024)
+            mem_pct = round(min(100.0, mem_gb / mem_total_gb * 100), 2) if mem_total_gb else 0.0
+            uptime = self._parse_systemd_uptime(ts.get(cid, ""))
+
+            # status degraded hanya untuk NF yang punya listen socket terverifikasi
+            status = "healthy"
+            extra = ""
+            if cid == "amf":
+                status = "healthy" if listen_amf > 0 else "degraded"
+                extra = f" | SCTP :38412 {'LISTEN' if listen_amf else 'not listening'}"
+            elif cid == "upf":
+                status = "healthy" if listen_upf > 0 else "degraded"
+                extra = f" | GTP-U :2152 {'LISTEN' if listen_upf else 'not listening'}"
+
+            label = OPEN5GS_NF_LABEL.get(cid, cid.upper())
+            detail = (
+                f"Open5GS {label} | unit {unit} | PID {pid.get(cid) or '-'}"
+                + extra
+                + f" | uptime {self._fmt_uptime(uptime)}"
+                + (f" | CPU {cpu_pct}% MEM {round(mem_gb, 2)}GB" if ps_raw else "")
+            )
+
+            new_cache[cid] = {
+                "id": cid,
+                "name": f"Open5GS {label}",
+                "kind": "5G Core NF (systemd)",
+                "status": status,
+                "detail": detail,
+                "host": self._ssh["host"],
+                "cpu_pct": round(cpu_pct, 2),
+                "mem_gb": round(mem_gb, 2),
+                "mem_pct": mem_pct,
+                "throughput_mbps": 0.0,
+                "port": OPEN5GS_NF_PORT.get(cid, 0),
+                "latency_ms": 0.0,
+                "active_ues": 0,
+                "last_updated": time.time(),
+                "uptime_seconds": uptime,
+                "started_at": time.time() - uptime,
+            }
+        self._cache = new_cache
+
+    def _down(self, comp_id: str, reason: str) -> dict:
+        label = OPEN5GS_NF_LABEL.get(comp_id, comp_id.upper())
+        return {
+            "id": comp_id, "name": f"Open5GS {label}", "kind": "5G Core NF (systemd)",
+            "status": "down", "detail": reason, "host": self._ssh["host"],
+            "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
+            "throughput_mbps": 0.0, "port": OPEN5GS_NF_PORT.get(comp_id, 0),
+            "latency_ms": 0.0, "active_ues": 0,
+            "last_updated": time.time(), "uptime_seconds": 0, "started_at": time.time(),
+        }
+
+    def _exec(self, cmd):
+        import paramiko
+        conn = self._conn
+        if conn is None or not conn.get_transport() or not conn.get_transport().is_active():
+            conn = paramiko.SSHClient()
+            conn.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            key_path = self._ssh.get("key_path")
+            if key_path:
+                # Core bare-metal (10.91.2.151) hanya menerima publickey auth
+                # (password dimatikan oleh admin jaringan lab) — lihat
+                # DOKUMENTASI-PROYEK-DASHBOARD-ORAN-KONTEKS-AGENT.md §2.2.
+                pkey = paramiko.Ed25519Key.from_private_key_file(key_path)
+                conn.connect(hostname=self._ssh["host"], port=self._ssh["port"],
+                             username=self._ssh["user"], pkey=pkey,
+                             timeout=8, banner_timeout=10)
+            else:
+                conn.connect(hostname=self._ssh["host"], port=self._ssh["port"],
+                             username=self._ssh["user"], password=self._ssh["password"],
+                             timeout=8, banner_timeout=10)
+            self._conn = conn
+        _, stdout, stderr = conn.exec_command(cmd, timeout=20)
+        out = stdout.read().decode("utf-8", errors="replace")
+        err = stderr.read().decode("utf-8", errors="replace")
+        return out, err
+
+    @staticmethod
+    def _to_float(s) -> float:
+        try:
+            return float(str(s).replace("%", "").strip())
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _parse_systemd_uptime(line: str) -> int:
+        if not line or "ActiveEnterTimestamp=" not in line or "n/a" in line.lower():
+            return 0
+        try:
+            from datetime import datetime, timezone, timedelta
+            ts_str = line.split("=", 1)[1].strip()
+            if not ts_str:
+                return 0
+            # systemd mencetak dalam timezone lokal node Core (WIB = UTC+7),
+            # abbreviation non-standar yang tidak dikenali strptime %Z -> buang
+            # token terakhir, parse naive, lalu konversi eksplisit WIB -> UTC
+            # supaya perbandingan dengan time.time() (selalu UTC) akurat
+            # walau mesin yang menjalankan backend ini berzona waktu beda.
+            bits = ts_str.split()
+            if len(bits) >= 2 and not bits[-1].isdigit() and ":" not in bits[-1]:
+                ts_str_naive = " ".join(bits[:-1])
+            else:
+                ts_str_naive = ts_str
+            WIB = timezone(timedelta(hours=7))
+            for fmt in ("%a %Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    dt_naive = datetime.strptime(ts_str_naive, fmt)
+                    dt_wib = dt_naive.replace(tzinfo=WIB)
+                    return max(0, int(time.time() - dt_wib.timestamp()))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return 0
+
+    @staticmethod
+    def _fmt_uptime(secs: int) -> str:
+        try:
+            d, r = divmod(int(secs), 86400)
+            h, r = divmod(r, 3600)
+            m, s = divmod(r, 60)
+            if d:
+                return f"{d}d{h}h{m}m"
+            if h:
+                return f"{h}h{m}m{s}s"
+            if m:
+                return f"{m}m{s}s"
+            return f"{s}s"
+        except Exception:
+            return f"{secs}s"
+
+
 class KubectlRicAdapter:
     """Adapter RIC via Kubernetes ns ric (Fase hostNetwork).
 
@@ -2555,6 +2892,43 @@ def _build_core_providers() -> dict:
         "desc": open5gs_desc,
         "adapter": adapter_5gs,
     }
+
+    # --- open5gs-systemd: Open5GS bare-metal via systemd (node `core`, 10.91.2.151) ---
+    # Testbed bare-metal 3 PC (lihat DOKUMENTASI-PROYEK-DASHBOARD-ORAN-
+    # KONTEKS-AGENT.md §4.5/§9): Open5GS v2.8.0 jalan sebagai systemd unit
+    # langsung di OS, BUKAN Docker/K8s. Provider terpisah dari "open5gs" di
+    # atas (yang masih K8s/Docker/mock) supaya tidak mengganggu jalur lama —
+    # keduanya boleh hidup berdampingan di tab Core.
+    systemd_host = os.environ.get("OPEN5GS_SYSTEMD_SSH_HOST", "") or None
+    if systemd_host:
+        try:
+            units = dict(DEFAULT_OPEN5GS_SYSTEMD_UNITS)
+            custom_units = os.environ.get("OPEN5GS_SYSTEMD_UNITS", "")
+            if custom_units:
+                try:
+                    units.update(json.loads(custom_units))
+                except Exception:
+                    pass
+            adapter_systemd = SshSystemdCoreAdapter(
+                ssh_host=systemd_host,
+                ssh_user=os.environ.get("OPEN5GS_SYSTEMD_SSH_USER", "core"),
+                ssh_password=os.environ.get("OPEN5GS_SYSTEMD_SSH_PASSWORD", ""),
+                ssh_port=int(os.environ.get("OPEN5GS_SYSTEMD_SSH_PORT", "22")),
+                units=units,
+                sudo_password=os.environ.get("OPEN5GS_SYSTEMD_SUDO_PASSWORD", ""),
+                ssh_key_path=os.environ.get("OPEN5GS_SYSTEMD_SSH_KEY_PATH", "") or None,
+            )
+            systemd_desc = "open5gs 5G Core (bare-metal systemd via SSH)"
+        except Exception as e:
+            print(f"[open5gs-systemd] fallback mock due to {e}", flush=True)
+            adapter_systemd = CoreAdapter()
+            systemd_desc = "open5gs 5G Core (fallback mock — env systemd invalid)"
+        providers["open5gs-systemd"] = {
+            "label": "open5GS (bare-metal)",
+            "icon": "dns",
+            "desc": systemd_desc,
+            "adapter": adapter_systemd,
+        }
 
     # --- K8s 5GC & Magma: hidden (2026-08-27) ---
     # Provider "k8s" (OAI K8s) dan "magma" sengaja TIDAK diregistrasi
