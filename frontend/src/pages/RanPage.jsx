@@ -91,9 +91,17 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
     getActiveProvider("ran").then(setActiveActivation).catch(() => {});
   }, []);
 
-  // Provider pertama = data live dari WebSocket (prop `components`).
-  // Provider lain = fetch sekali via REST saat tab diklik.
-  const isDefaultProvider = providers[0]?.key === activeProvider;
+  // WebSocket telemetry (prop `components`) men-stream provider yang AKTIF
+  // di DB (meta.active.ran dari backend — tabel active_providers), BUKAN
+  // selalu provider pertama di registry. Fallback ke providers[0] kalau
+  // belum ada provider yang diaktifkan — ini meniru persis logika backend
+  // (main.py::telemetry_ws: entry = active_map.get(domain) atau
+  // next(iter(providers.values()))). Tanpa fallback ke meta.active ini,
+  // tab OAI bisa salah menampilkan data srsRAN (atau sebaliknya) kalau
+  // provider aktif di DB bukan providers[0] — komponen tidak pernah
+  // ter-"bind" ke tab yang benar-benar diklik.
+  const streamedProviderKey = telemetryMeta?.active?.ran || providers[0]?.key;
+  const isDefaultProvider = streamedProviderKey === activeProvider;
 
   useEffect(() => {
     if (!activeProvider || isDefaultProvider) {
