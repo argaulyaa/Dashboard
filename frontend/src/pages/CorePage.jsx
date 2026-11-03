@@ -176,6 +176,12 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
       }
     } catch (e) {
       console.error("Provider activation failed", e);
+      // "no_active_provider" (bare string detail) means the DB bookkeeping
+      // row was already clear — treat as already-deactivated, not an error.
+      if (e?.payload === "no_active_provider") {
+        setActiveActivation(null);
+        return;
+      }
       const reason = e?.payload?.message || e?.message;
       if (e?.payload?.reason === "provider_active") {
         // Race antar user: state lokal basi -> sinkron ulang dari server
@@ -193,7 +199,13 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
     setSwitchPrompt(null);
     setActivationBusy(true);
     try {
-      await deactivateProvider("core");
+      try {
+        await deactivateProvider("core");
+      } catch (deactivateErr) {
+        // "no_active_provider" just means nothing was active to begin with —
+        // fine, continue to activate toKey below instead of aborting.
+        if (deactivateErr?.payload !== "no_active_provider") throw deactivateErr;
+      }
       await activateProvider("core", toKey);
       setActiveActivation({ provider: toKey });
     } catch (e) {
