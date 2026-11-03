@@ -125,6 +125,53 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
     setActiveActivation(wsActiveRan ? { provider: wsActiveRan } : null);
   }, [wsActiveRan]);
 
+  // ---- Health REAL per provider (independen dari bookkeeping DB) ----
+  // Bug yang diperbaiki (3 Nov 2026): badge ACTIVE/Current Operator/tombol
+  // Activate-Deactivate sebelumnya 100% ikut tabel active_providers di DB —
+  // yang CUMA berubah lewat tombol dashboard. Kalau radio di-switch manual
+  // via SSH (operator langsung di server, di luar dashboard), DB jadi basi
+  // dan UI menampilkan provider yang SALAH sebagai aktif.
+  // Fix: poll health SEMUA provider RAN tiap 5s (independen dari tab yang
+  // sedang dibuka), lalu badge/tombol/Current Operator pakai HEALTH NYATA
+  // sebagai sumber kebenaran utama — DB cuma dipakai sebagai fallback kalau
+  // tidak ada satupun provider yang sehat (mis. keduanya mati).
+  const [providerHealthMap, setProviderHealthMap] = useState({});
+  useEffect(() => {
+    if (!providers.length) return;
+    let cancelled = false;
+    const pollAll = async () => {
+      const entries = await Promise.all(
+        providers.map(async (p) => {
+          // Provider yang sedang di-stream WS pakai `components` langsung
+          // (live, tanpa REST tambahan) — provider lain di-fetch REST.
+          if (p.key === streamedProviderKey) {
+            return [p.key, domainHealth(components)];
+          }
+          try {
+            const comps = await fetchComponents("ran", p.key);
+            return [p.key, domainHealth(comps)];
+          } catch {
+            return [p.key, "down"];
+          }
+        })
+      );
+      if (!cancelled) setProviderHealthMap(Object.fromEntries(entries));
+    };
+    pollAll();
+    const id = setInterval(pollAll, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [providers, streamedProviderKey, components]);
+
+  // Provider yang REAL-TIME sehat (gNB benar-benar jalan) — null kalau tidak
+  // ada satupun yang healthy/degraded (semua down).
+  const realActiveProviderKey = useMemo(() => {
+    const healthyKey = providers.find((p) => {
+      const h = providerHealthMap[p.key];
+      return h === "healthy" || h === "degraded";
+    })?.key;
+    return healthyKey ?? null;
+  }, [providers, providerHealthMap]);
+
   const activeCoreKey = telemetryMeta?.active?.core ?? null; // null = belum ada data WS
   const hasCoreData = telemetryMeta?.active != null;
 
@@ -145,8 +192,11 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
   // ---- Provider activation state ----
   // RBAC 2-role: user & admin sama-sama operator penuh.
   const isViewer = false;
-  // Provider yang sedang aktif secara eksplisit (atau null).
-  const activatedKey = activeActivation?.provider || null;
+  // Provider yang "aktif": prioritas HEALTH NYATA (realActiveProviderKey) —
+  // fallback ke status DB (activeActivation) HANYA kalau tidak ada provider
+  // yang benar-benar hidup (mis. keduanya down, atau baru switch manual
+  // lewat SSH belum sempat ke-detect poll pertama).
+  const activatedKey = realActiveProviderKey ?? activeActivation?.provider ?? null;
   const activatedLabel = providers.find((p) => p.key === activatedKey)?.label || activatedKey;
   // Fallback kayak Core: Active/Critical (gNB ada) => Deactivate, Offline (no gNB) => Activate
   const isActiveTab = activatedKey != null ? activatedKey === activeProvider : displayedComponents.length > 0;
