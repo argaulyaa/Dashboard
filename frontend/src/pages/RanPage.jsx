@@ -8,7 +8,7 @@ import { usePageHeader } from "../components/PageHeaderContext.jsx";
 const STATUS_META = {
   healthy: { label: "Active", dot: "bg-secondary", text: "text-secondary", pulse: true },
   degraded: { label: "Degraded", dot: "bg-tertiary", text: "text-tertiary", pulse: false },
-  down: { label: "Critical", dot: "bg-error", text: "text-error", pulse: false },
+  down: { label: "Inactive", dot: "bg-error", text: "text-error", pulse: false },
   restarting: { label: "Restarting", dot: "bg-primary", text: "text-primary", pulse: true },
 };
 
