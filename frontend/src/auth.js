@@ -1,4 +1,5 @@
 import { setUser, setRole, clearUser } from "./user.js";
+import { API_BASE } from "./config.js";
 
 const KEY = "oran-dashboard:token";
 
@@ -15,7 +16,7 @@ export function isAuthenticated() {
   return !!getToken();
 }
 export async function login(username, password) {
-  const res = await fetch("/api/auth/login", {
+  const res = await fetch(`${API_BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
@@ -36,7 +37,7 @@ export async function login(username, password) {
 
 // NOTE: no role parameter — self-register is always 'user' (backend-enforced).
 export async function register(fullName, username, email, password) {
-  const res = await fetch("/api/auth/register", {
+  const res = await fetch(`${API_BASE}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ full_name: fullName, username, email, password }),
@@ -63,19 +64,19 @@ function authHeaders() {
 }
 
 export async function fetchProfile() {
-  const res = await fetch("/api/auth/profile", { headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/auth/profile`, { headers: authHeaders() });
   if (!res.ok) throw new Error("profile_fetch_failed");
   return res.json();
 }
 
 export async function fetchMe() {
-  const res = await fetch("/api/auth/me", { headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/auth/me`, { headers: authHeaders() });
   if (!res.ok) throw new Error("profile_fetch_failed");
   return res.json();
 }
 
 export async function updateProfile(fullName) {
-  const res = await fetch("/api/auth/profile", {
+  const res = await fetch(`${API_BASE}/auth/profile`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ full_name: fullName }),
@@ -90,7 +91,7 @@ export async function updateProfile(fullName) {
 }
 
 export async function changePassword(currentPassword, newPassword) {
-  const res = await fetch("/api/auth/change-password", {
+  const res = await fetch(`${API_BASE}/auth/change-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),

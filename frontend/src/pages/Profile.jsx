@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getToken, fetchProfile, updateProfile, changePassword, logout } from "../auth.js";
 import { fetchUsers, deleteUser, updateUserRole } from "../api.js";
+import { API_BASE } from "../config.js";
 import { getRole } from "../user.js";
 
 function formatDateTime(ts) {
@@ -90,7 +91,7 @@ export default function Profile({ currentUser, onUserChange, onLogout, opsCount 
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/auth/session", {
+        const res = await fetch(`${API_BASE}/auth/session`, {
           headers: { Authorization: `Bearer ${getToken()}` },
         });
         if (!res.ok) throw new Error("session_fetch_failed");

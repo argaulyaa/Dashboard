@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { fetchProviders, fetchComponents, fetchActiveBooking } from "../api.js";
+import { API_BASE } from "../config.js";
 import { getRole } from "../user.js";
 import LogsModal from "../components/LogsModal.jsx";
 import ConsoleTerminal from "../components/ConsoleTerminal.jsx";
@@ -114,7 +115,7 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
     let cancelled=false;
     const fetchLogs=async()=>{
       try{
-        const res=await fetch(`/api/ric/components/${hero?.id||"flexric-nearrt-ric"}/logs?provider=oai&tail=20`, {headers:{Authorization:`Bearer ${localStorage.getItem("token")||""}`}});
+        const res=await fetch(`${API_BASE}/ric/components/${hero?.id||"flexric-nearrt-ric"}/logs?provider=oai&tail=20`, {headers:{Authorization:`Bearer ${localStorage.getItem("token")||""}`}});
         if(!res.ok) return;
         const data=await res.json();
         if(!cancelled && data.logs) setLiveLogs(data.logs);

@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-11-03 - Deploy bare-metal di RIC: nginx (`/oran/`) + systemd, tanpa Docker/K8s
+
+### Perubahan
+- `frontend/src/config.js` (baru) — `API_BASE` / `WS_BASE` dibaca dari `VITE_API_BASE` / `VITE_WS_BASE`; **default tetap `/api` dan `/ws`** sehingga deploy di root domain / K8s tidak berubah.
+- `frontend/src/api.js`, `frontend/src/auth.js`, `frontend/src/pages/Profile.jsx`, `frontend/src/pages/RicPage.jsx`, `frontend/src/components/ConsoleTerminal.jsx` — path absolut `/api/...` dan `/ws/...` diganti `API_BASE` / `WS_BASE` supaya app bisa di-serve di subpath `/oran/` (bentrok dengan dashboard-test kalau tetap absolut).
+- `frontend/index.html` — favicon pakai `%BASE_URL%` agar ikut base build.
+- `backend/auth.py` — fallback `_DEFAULT_USERS` (`admin`/`admin`) sekarang hanya berlaku bila user `admin` **belum ada** di DB, sesuai komentar kode. Sebelumnya fallback selalu menerima `admin/admin` walau password sudah diganti → backdoor permanen di instance publik.
+- Deploy (di luar repo, `/home/telmat/oran-deploy/`): systemd `oran-dashboard-api.service` (uvicorn `127.0.0.1:8100`), nginx location `/oran/`, `/oran/api/`, `/oran/ws/` di vhost `dashboard-5g.testbed-itb.my.id`, static di `/var/www/oran-dashboard`, `deploy.sh` untuk redeploy, `README.md` untuk operasional & rollback.
+
+### Verifikasi
+- Build: vite 5.4.21 `--base=/oran/` → `index-Dw1ZqiC4.js` (626 kB) + `index-BgkknO9X.css`; bundle berisi `/oran/api`, tidak ada `/api` absolut.
+- `nginx -t` OK; publik `https://dashboard-5g.testbed-itb.my.id/oran/` → 200, `/oran/api/health` → `{"status":"ok"}`.
+- Login via nginx → 200; endpoint terautentikasi `/api/auth/me`, `/api/{core,ran,ric}/components`, `/api/ran/status` → 200 dengan data live (core 7 komponen, RAN 1, RIC 1).
+- UI publik (browser): login berhasil, Overview render "8/9 healthy components", Core/RAN/RIC ONLINE.
+- Regresi: `https://.../` (dashboard-test) tetap 200; `/api/flask/get_reservations` tetap 401 tanpa sesi (perilaku lama).
+- Keamanan: rotasi password admin → password baru 200, `admin/admin` 401, password salah 401.
+
+
 ## 2026-09-01 - Overview: pindah Active Reservations ke bawah Core/RAN/RIC
 
 ### Perubahan

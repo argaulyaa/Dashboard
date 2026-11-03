@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
+import { WS_BASE } from "../config.js";
 
 export default function SshTerminal({ domain, componentId, host, currentUser, provider }) {
   // Fallback: if parent forgot currentUser, read from auth token (like CorePage does)
@@ -46,7 +47,7 @@ export default function SshTerminal({ domain, componentId, host, currentUser, pr
         ? `${window.location.hostname}:8000`
         : window.location.host;
     const prov = provider || new URLSearchParams(window.location.search).get("provider") || (domain==="core" ? "oai" : "");
-    const wsUrl = `${proto}://${hostUrl}/ws/ssh/${domain}/${componentId}${prov ? `?provider=${prov}` : ""}`;
+    const wsUrl = `${proto}://${hostUrl}${WS_BASE}/ssh/${domain}/${componentId}${prov ? `?provider=${prov}` : ""}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 

@@ -562,7 +562,7 @@ def authenticate(username: str, password: str, ip: str = "") -> str | None:
             return token
 
         # Fallback for default admin if not in DB
-        if username in _DEFAULT_USERS and secrets.compare_digest(_DEFAULT_USERS[username], password):
+        if user is None and username in _DEFAULT_USERS and secrets.compare_digest(_DEFAULT_USERS[username], password):
             token = secrets.token_urlsafe(32)
             session = SessionModel(
                 token=token,

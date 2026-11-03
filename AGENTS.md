@@ -194,3 +194,43 @@ belum kebaca saat `adapters.py` membangun `CORE_PROVIDERS`.
   diset **sebagai default di `values.yaml`** (bukan hanya lewat `--set`), supaya
   `helm upgrade` tanpa `--reuse-values` tetap me-render state known-good.
   Backend & frontend di-pin ke node `core` (`nodeSelector`) agar jalur SSH/image konsisten.
+
+## Deploy bare-metal (nginx + systemd) — RIC 10.91.2.153
+
+Selain jalur K8s/CI di atas, instance ini juga jalan **bare-metal tanpa Docker/K8s**
+(dipasang 2026-11-03, kanban `t_91e2db81`). Dokumen operasional: `/home/telmat/oran-deploy/README.md`.
+
+| Item | Nilai |
+|---|---|
+| URL publik | https://dashboard-5g.testbed-itb.my.id/oran/ |
+| URL LAN | https://10.91.2.153/oran/ |
+| Backend | systemd `oran-dashboard-api.service`, uvicorn `127.0.0.1:8100`, `User=telmat` |
+| WorkingDirectory | `/home/telmat/Dashboard/OpenRAN-Dashboard/backend` |
+| EnvFile | `backend/.env` (mode 600, gitignored) |
+| DB | SQLite `backend/oran_dashboard.db` (gitignored) |
+| Static | `/var/www/oran-dashboard` (dari `frontend/dist`) |
+| nginx | blok `/oran/`, `/oran/api/`, `/oran/ws/` di `/etc/nginx/sites-enabled/dashboard.conf` |
+| Redeploy | `bash /home/telmat/oran-deploy/deploy.sh` |
+
+### Yang WAJIB diingat kalau menyentuh frontend
+
+- App di-serve di **subpath** `/oran/`. Semua path absolut `/api` dan `/ws` sudah
+  diganti `API_BASE` / `WS_BASE` dari `frontend/src/config.js`.
+- **Default `config.js` tetap `/api` dan `/ws`** — jangan diubah jadi absolut
+  `/oran/api`, karena deploy root-domain/K8s akan rusak. Subpath diatur lewat env
+  build: `VITE_API_BASE=/oran/api VITE_WS_BASE=/oran/ws` (sudah ada di `deploy.sh`).
+- Router memakai **HashRouter**, jadi route SPA ada di fragment URL dan subpath tidak
+  perlu `basename`. Kalau router diganti ke BrowserRouter, location nginx
+  `^~ /oran/` harus ditambah `try_files ... /oran/index.html`.
+- Jangan hapus `favicon` `%BASE_URL%` di `frontend/index.html` — favicon akan 404 di subpath.
+
+### Keamanan (jangan di-rollback tanpa konteks)
+
+- `backend/auth.py`: fallback `_DEFAULT_USERS` (`admin`/`admin`) **hanya berlaku saat
+  user admin belum ada di DB**. Sebelumnya fallback ini selalu menerima `admin/admin`
+  walau password sudah diganti — backdoor permanen di instance yang terbuka publik.
+  Jangan hapus guard `user is None`.
+- Kredensial admin instance ini ada di `/home/telmat/oran-deploy/ADMIN_CREDENTIALS.txt`
+  (mode 600, **jangan di-commit**). Password default `admin/admin` sudah dirotasi.
+- Registrasi user butuh SMTP (OTP email) → tanpa SMTP registrasi gagal tertutup.
+

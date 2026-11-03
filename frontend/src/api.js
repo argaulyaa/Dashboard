@@ -1,6 +1,7 @@
 import { getToken } from "./auth.js";
+import { API_BASE, WS_BASE } from "./config.js";
 
-const BASE = "/api";
+const BASE = API_BASE;
 
 // Helper: inject Authorization header ke semua request yang butuh auth.
 // Token diambil dari localStorage lewat auth.js (satu sumber kebenaran).
@@ -274,7 +275,7 @@ export function getLogsLiveUrl(domain, provider, compId, tail = 100) {
       ? `${window.location.hostname}:8000`
       : window.location.host;
   const prov = provider || "oai";
-  return `${proto}://${host}/ws/logs/${encodeURIComponent(domain)}/${encodeURIComponent(prov)}/${encodeURIComponent(compId)}?tail=${encodeURIComponent(tail)}`;
+  return `${proto}://${host}${WS_BASE}/logs/${encodeURIComponent(domain)}/${encodeURIComponent(prov)}/${encodeURIComponent(compId)}?tail=${encodeURIComponent(tail)}`;
 }
 
 // Open live logs WebSocket; returns WebSocket instance
@@ -293,7 +294,7 @@ export function openTelemetrySocket(onSnapshot) {
     window.location.port === "5173"
       ? `${window.location.hostname}:8000`
       : window.location.host;
-  const ws = new WebSocket(`${proto}://${host}/ws/telemetry${qs}`);
+  const ws = new WebSocket(`${proto}://${host}${WS_BASE}/telemetry${qs}`);
   ws.onmessage = (evt) => {
     try {
       onSnapshot(normalizeSnapshot(JSON.parse(evt.data)));
