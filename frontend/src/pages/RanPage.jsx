@@ -259,6 +259,16 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
       }
     } catch (e) {
       console.error("Provider activation failed", e);
+      // Server returns a bare string detail ("no_active_provider") when the
+      // DB bookkeeping row was already cleared (e.g. by a previous click, or
+      // by someone else's RAN being deactivated in another tab) — this is
+      // not a real failure, it just means "already off" from the server's
+      // point of view. Don't alert the user with a raw error code for it.
+      const isAlreadyInactive = e?.payload === "no_active_provider";
+      if (isAlreadyInactive) {
+        setActiveActivation(null);
+        return;
+      }
       const reason = e?.payload?.message || e?.message;
       if (e?.payload?.reason === "provider_active") {
         getActiveProvider("ran").then(setActiveActivation).catch(() => {});
@@ -482,7 +492,7 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
                   <button onClick={()=>setConsoleTarget(null)} className="p-2 hover:bg-slate-800 rounded-lg"><span className="material-symbols-outlined text-slate-400">close</span></button>
                 </div>
                 <div className="flex-1 p-2 bg-black min-h-[480px]">
-                  <ConsoleTerminal domain={consoleTarget.domain} compId={consoleTarget.compId} provider={consoleTarget.provider} currentUser={currentUser} host="10.91.2.152" onClose={()=>setConsoleTarget(null)} />
+                  <ConsoleTerminal domain={consoleTarget.domain} componentId={consoleTarget.compId} provider={consoleTarget.provider} currentUser={currentUser} host="10.91.2.152" onClose={()=>setConsoleTarget(null)} />
                 </div>
               </div>
             </div>

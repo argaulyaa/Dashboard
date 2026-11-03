@@ -1364,8 +1364,14 @@ class SshRanAdapter:
     def jitter_health(self):
         pass
 
+    # Log file real per unit systemd (lihat systemctl cat <unit>.service di
+    # RAN host) — JANGAN glob /home/ran/*.log: ada puluhan file historis dari
+    # eksperimen manual lama yang membuat "log terbaru" salah pilih file basi.
+    # OAI (oai-gnb.service): StandardOutput/Error -> append:/home/ran/gnb-106.log
+    DEFAULT_LOG_PATH = "/home/ran/gnb-106.log"
+
     def get_logs(self, comp_id: str, tail: int = 100) -> str:
-        log = self._cfg.get("log", "/home/ran/srsgnb.log")
+        log = self._cfg.get("log") or self.DEFAULT_LOG_PATH
         try:
             out, _ = self._exec(f"tail -n {int(tail)} {log}")
             return out or "(none log)"
@@ -1380,11 +1386,15 @@ class SshRanAdapter:
         self._last_fetch = now
         try:
             _bins = " ".join(self._binary_hints)
+            # OAI (oai-gnb.service) logs to /home/ran/gnb-106.log (see
+            # systemctl cat oai-gnb.service StandardOutput) — hardcode,
+            # don't glob /home/ran/*.log (dozens of stale manual-run logs
+            # there sort newer than the live service's own log).
             out, _ = self._exec(
                 f"for name in {_bins}; do "
                 "m=$(ps -C $name --no-headers -o pid=,etime=,pcpu=,rss=,args= 2>/dev/null | head -1); "
                 "[ -n \"$m\" ] && echo \"PROC|$name|$m\"; done; "
-                "L=$(ls -t /home/ran/srsgnb*.log /home/ran/gnb*.log 2>/dev/null | head -1); "
+                "L=/home/ran/gnb-106.log; "
                 "echo \"LOG|$L\"; "
                 "echo \"UE|$(tail -2000 \"$L\" 2>/dev/null | grep -iE 'RRC|connected' | grep -oiE 'rnti[ =:]?0x[0-9a-f]+' | sort -u | wc -l)\"; "
                 "echo \"N2|$(sudo ss -Sn 2>/dev/null | grep ':38412' | grep -c ESTAB)\"; "
@@ -1413,7 +1423,7 @@ class SshRanAdapter:
                                 "rss_kb": self._to_float(rest[3]),
                                 "args": rest[4] if len(rest) > 4 else ""}
             elif ln.startswith("LOG|"):
-                self._cfg["log"] = ln.split("|", 1)[1].strip() or "/home/ran/srsgnb.log"
+                self._cfg["log"] = ln.split("|", 1)[1].strip() or self.DEFAULT_LOG_PATH
             elif ln.startswith("UE|"):
                 ue_count = int(ln.split("|", 1)[1] or 0)
             elif ln.startswith("N2|"):
@@ -1479,13 +1489,7 @@ class SshRanAdapter:
 
     # ---------------- helpers ----------------
     def _guess_active_log(self, gtype) -> str:
-        try:
-            out, _ = self._exec(
-                "ls -t /home/ran/gnb*.log /home/ran/srsgnb*.log 2>/dev/null | head -1")
-            p = out.strip().splitlines()
-            return p[0] if p and p[0].strip() else "/home/ran/srsgnb.log"
-        except Exception:
-            return "/home/ran/srsgnb.log"
+        return self.DEFAULT_LOG_PATH
 
     def _fetch_config(self, gtype, args) -> dict:
         import re
@@ -1648,6 +1652,12 @@ class SrsRanSshAdapter(SshRanAdapter):
     def __init__(self, ssh_host: str, ssh_user: str, ssh_password: str, ssh_port: int = 22):
         super().__init__(ssh_host, ssh_user, ssh_password, ssh_port)
 
+    # srsran-gnb.service -> StandardOutput=append:/var/log/srsran-gnb.stdout.log
+    # (see systemctl cat srsran-gnb.service on 10.91.2.152). Hardcode — do not
+    # glob /home/ran/*.log, those are stale manual-run logs, none of them are
+    # the live systemd unit's actual output.
+    DEFAULT_LOG_PATH = "/var/log/srsran-gnb.stdout.log"
+
     def _maybe_refresh(self):
         now = time.time()
         if now - self._last_fetch < self.CACHE_TTL:
@@ -1657,7 +1667,7 @@ class SrsRanSshAdapter(SshRanAdapter):
             out, _ = self._exec(
                 "m=$(ps -C gnb --no-headers -o pid=,etime=,pcpu=,rss=,args= 2>/dev/null | head -1); "
                 "[ -n \"$m\" ] && echo \"PROC|gnb|$m\"; "
-                "L=$(ls -t /home/ran/gnb*.log 2>/dev/null | head -1); "
+                "L=/var/log/srsran-gnb.stdout.log; "
                 "echo \"LOG|$L\"; "
                 "echo \"UE|$(tail -2000 \"$L\" 2>/dev/null | grep -iE 'RRC|connected' | grep -oiE 'rnti[ =:]?0x[0-9a-f]+' | sort -u | wc -l)\"; "
                 "echo \"N2|$(sudo ss -Sn 2>/dev/null | grep ':38412' | grep -c ESTAB)\"; "
