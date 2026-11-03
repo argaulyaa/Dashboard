@@ -113,10 +113,14 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
     getActiveProvider("core").then(setActiveActivation).catch(() => {});
   }, []);
 
-  // Provider pertama (default) pakai data live dari WebSocket telemetry
-  // (`components` prop, sudah dikirim App.jsx). Provider lain (kalau ada)
-  // diambil sekali lewat REST saat tab-nya diklik.
-  const isDefaultProvider = providers[0]?.key === activeProvider;
+  // WebSocket telemetry (`components` prop) men-stream provider yang AKTIF
+  // di DB (meta.active.core — tabel active_providers), BUKAN selalu
+  // provider pertama di registry. Fallback ke providers[0] kalau belum ada
+  // provider yang diaktifkan — meniru persis logika backend
+  // (main.py::telemetry_ws). Tanpa ini, tab provider kedua (kalau ada)
+  // bisa salah menampilkan data provider lain yang sedang aktif di DB.
+  const streamedProviderKey = telemetryMeta?.active?.core || providers[0]?.key;
+  const isDefaultProvider = streamedProviderKey === activeProvider;
 
   useEffect(() => {
     if (!activeProvider || isDefaultProvider) {
