@@ -29,13 +29,15 @@ from fastapi import HTTPException
 
 # ---------------------------------------------------------------------------
 # CORE_RAN_MAP — satu entri per provider Core yang MUNGKIN dipilih dari UI.
-# "live": True hanya untuk provider yang benar-benar berjalan di testbed saat
-# dokumen ini ditulis (Open5GS systemd). Provider lain (oai docker-legacy,
-# open5gs K8s lama) tetap terdaftar supaya dropdown tidak error kalau user
-# memilihnya, tapi connect() menolak dengan pesan jujur, bukan pura-pura.
+# Key HARUS sama persis dengan key provider di adapters.py::_build_core_providers
+# (frontend memakai key ini untuk dropdown/activate). Hanya "open5gs" live=True
+# (satu-satunya provider Core sekarang — Open5GS bare-metal systemd). "oai"
+# tetap terdaftar supaya dropdown tidak error kalau ditambahkan lagi nanti,
+# tapi connect() menolak dengan pesan jujur (PENDING, bentrok port dengan
+# Open5GS) — bukan pura-pura berhasil.
 # ---------------------------------------------------------------------------
 CORE_RAN_MAP = {
-    "open5gs-systemd": {
+    "open5gs": {
         "live": True,
         "kind": "systemd",
         "amf_ip": "10.91.2.151",
@@ -48,15 +50,10 @@ CORE_RAN_MAP = {
         # unit representatif untuk cek "core hidup" — AMF cukup mewakili NF lain
         "probe_unit": "open5gs-amfd",
     },
-    "open5gs": {
-        "live": False,
-        "kind": "unsupported",
-        "reason": "Provider 'open5gs' (K8s/Docker legacy) tidak berjalan di testbed bare-metal ini. Pakai 'open5gs-systemd'.",
-    },
     "oai": {
         "live": False,
         "kind": "unsupported",
-        "reason": "OAI 5G Core (Docker legacy) tidak aktif di testbed ini — 10 container lama berstatus Exited. Belum ada jalur bare-metal untuk OAI Core.",
+        "reason": "OAI 5G Core PENDING — Docker compose OAI ingin bind port host yang sama dengan Open5GS yang sedang live (AMF 10.91.2.151:38412/sctp, SMF :8805/udp, UPF :2152/udp). Menyalakannya akan bentrok port atau butuh ubah config Open5GS yang sedang jalan. Butuh strategi port/IP terpisah yang disetujui dulu.",
     },
 }
 
@@ -295,7 +292,7 @@ def connect_ran_to_core(core_provider: str, ran_provider: str, requested_by: str
     POST /api/ran/connect. Mengembalikan dict hasil (atau raise HTTPException).
 
     Alur (sesuai §4.6 DOKUMENTASI-PROYEK-DASHBOARD-ORAN-KONTEKS-AGENT.md):
-      1. Validasi core_provider live (hanya open5gs-systemd saat ini).
+      1. Validasi core_provider live (hanya open5gs saat ini).
       2. Stop KEDUA unit gNB (srsran-gnb + oai-gnb) — hanya 1 boleh hidup,
          1x USRP B210 dipakai bergiliran.
       3. Retarget AMF addr di config RAN terpilih via python re.sub (bukan

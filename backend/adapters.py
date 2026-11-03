@@ -2741,164 +2741,22 @@ def _build_core_providers() -> dict:
     Urutan insert menentukan provider mana yang jadi "default" (first) —
     default provider dapat live update via WebSocket telemetry.
     Provider lain diambil sekali via REST saat tab-nya diklik di frontend.
+
+    Testbed sekarang murni bare-metal 3 PC, tanpa Kubernetes/Docker untuk
+    Core (lihat DOKUMENTASI-PROYEK-DASHBOARD-ORAN-KONTEKS-AGENT.md §4.5/§9).
+    Hanya SATU provider Core terdaftar di sini: Open5GS systemd (nyata).
+    Provider mock lama (OAI K8s/Docker-legacy, open5gs K8s/Docker-legacy)
+    sengaja DIHAPUS dari registry per 3 Nov 2026 — tidak ada clustering lagi,
+    jadi tidak ada lagi beda "native" vs "bare-metal" yang perlu dilabeli.
+    Kode adapter K8s/Docker (KubectlOaiCoreAdapter, SshDockerCoreAdapter, dst)
+    TETAP ADA di file ini untuk dipakai lagi kapan pun kalau OAI Core
+    disambungkan tanpa bentrok port dengan Open5GS — lihat catatan "OAI 5G
+    Core: PENDING" di bawah (belum bisa tanpa relokasi port SCTP 38412 /
+    UDP 2152 / 8805 yang sudah dipakai Open5GS bare-metal).
     """
     providers = {}
-    adapter = None
-    oai_desc = None
 
-    # --- OAI Core via Kubernetes (Fase 1: read-only visibility) ---
-    # 5GC aktif jalan di K8s (ns 5g-core). Adapter membaca state cluster via
-    # kubectl over SSH ke node master yang memegang /etc/kubernetes/admin.conf.
-    # Env lama OAI_SSH_* masih didukung sebagai jalur Docker-legacy untuk
-    # setup non-K8s, tapi testbed ini TIDAK memakainya lagi (docker di node
-    # core hanya berisi Open5GS demo lama — bukan 5GC aktif).
-    oai_k8s_host = os.environ.get("OAI_K8S_SSH_HOST", "") or None
-    if oai_k8s_host:
-        try:
-            k8s_map = dict(DEFAULT_OAI_K8S_COMPONENT_MAP)
-            custom = os.environ.get("OAI_K8S_COMPONENT_MAP", "")
-            if custom:
-                try:
-                    k8s_map.update(json.loads(custom))
-                except Exception:
-                    pass  # JSON rusak -> pakai pemetaan default
-            adapter = KubectlOaiCoreAdapter(
-                k8s_map,
-                ssh_host=oai_k8s_host,
-                ssh_user=os.environ.get("OAI_K8S_SSH_USER", "telmat"),
-                ssh_password=os.environ.get("OAI_K8S_SSH_PASSWORD", ""),
-                sudo_password=os.environ.get("K8S_SUDO_PASSWORD", ""),
-                ssh_port=int(os.environ.get("OAI_K8S_SSH_PORT", "22")),
-                namespace=os.environ.get("OAI_K8S_NAMESPACE", "5g-core"),
-                kubeconfig=os.environ.get(
-                    "OAI_K8S_ADMIN_CONF", "/etc/kubernetes/admin.conf"),
-            )
-            oai_desc = "OpenAirInterface 5G Core"
-        except Exception:
-            adapter = CoreAdapter()
-            oai_desc = "OpenAirInterface 5G Core (fallback mock — env K8s invalid)"
-    else:
-        oai_desc = None  # jatuh ke blok Docker-legacy di bawah
-
-    # --- Jalur Docker-legacy (hanya dipakai kalau OAI_K8S_SSH_HOST kosong) ---
-    if oai_desc is None:
-        oai_containers_raw = os.environ.get("OAI_CORE_CONTAINERS", "")
-        oai_ssh_host = os.environ.get("OAI_SSH_HOST", "") or None
-        oai_docker_host = os.environ.get("OAI_DOCKER_HOST", "") or None
-
-        # Pemetaan default sesuai container compose OAI versi lama (non-K8s)
-        DEFAULT_OAI_CONTAINER_MAP = {
-            "amf": "oai-amf", "smf": "oai-smf", "upf": "oai-upf", "nrf": "oai-nrf",
-            "ausf": "oai-ausf", "udm": "oai-udm", "udr": "oai-udr",
-        }
-        if oai_containers_raw:
-            try:
-                container_map = json.loads(oai_containers_raw)
-            except Exception:
-                container_map = DEFAULT_OAI_CONTAINER_MAP
-        elif oai_ssh_host or oai_docker_host:
-            container_map = DEFAULT_OAI_CONTAINER_MAP
-        else:
-            container_map = {}
-
-        if oai_ssh_host and container_map:
-            # Mode SSH: perintah docker dijalankan remote via paramiko.
-            # LEGACY: hanya untuk testbed Docker lama (Open5GS demo di
-            # demo-oai-public-net) — BUKAN 5GC K8s yang sekarang aktif.
-            adapter = SshDockerCoreAdapter(
-                container_map,
-                ssh_host=oai_ssh_host,
-                ssh_user=os.environ.get("OAI_SSH_USER", "core"),
-                ssh_password=os.environ.get("OAI_SSH_PASSWORD", ""),
-                ssh_port=int(os.environ.get("OAI_SSH_PORT", "22")),
-            )
-            oai_desc = "OpenAirInterface 5G Core (Docker legacy via SSH)"
-        elif container_map:
-            try:
-                adapter = DockerCoreAdapter(container_map, docker_host=oai_docker_host)
-            except Exception:
-                # Docker tidak reachable atau env tidak valid → fallback ke mock
-                adapter = CoreAdapter()
-                oai_desc = "OpenAirInterface 5G Core (mock fallback)"
-            else:
-                oai_desc = "OpenAirInterface 5G Core (Docker Engine API)"
-        else:
-            adapter = CoreAdapter()  # fallback mock
-            oai_desc = "OpenAirInterface 5G Core (mock)"
-
-    providers["oai"] = {
-        "label": "OAI 5GC",
-        "icon": "cloud_done",
-        "desc": oai_desc,
-        "adapter": adapter,
-    }
-
-    # --- open5gs via Kubernetes (live) else Docker else mock ---
-    open5gs_k8s_host = os.environ.get("OPEN5GS_K8S_SSH_HOST", "") or os.environ.get("OAI_K8S_SSH_HOST", "") or None
-    # If no dedicated open5gs host, fallback to OAI host (same master 10.91.2.156 holds both namespaces)
-    if not open5gs_k8s_host:
-        # also check legacy OAI_K8S_SSH_HOST already captured above, but fallback explicit
-        open5gs_k8s_host = os.environ.get("OAI_K8S_SSH_HOST", "") or None
-    adapter_5gs = None
-    open5gs_desc = None
-    if open5gs_k8s_host:
-        try:
-            k8s_map_5gs = dict(DEFAULT_OPEN5GS_K8S_COMPONENT_MAP)
-            custom_5gs = os.environ.get("OPEN5GS_K8S_COMPONENT_MAP", "")
-            if custom_5gs:
-                try:
-                    k8s_map_5gs.update(json.loads(custom_5gs))
-                except Exception:
-                    pass
-            open5gs_ns = os.environ.get("OPEN5GS_K8S_NAMESPACE", "") or os.environ.get("OPEN5GS_NAMESPACE", "") or "open5gs-chart"
-            # sanitize: if env contains open5gs value like "open5gs" use it, else default chart
-            open5gs_user = os.environ.get("OPEN5GS_K8S_SSH_USER", "") or os.environ.get("OAI_K8S_SSH_USER", "telmat") or "telmat"
-            open5gs_port = int(os.environ.get("OPEN5GS_K8S_SSH_PORT", "") or os.environ.get("OAI_K8S_SSH_PORT", "22") or "22")
-            open5gs_pw = os.environ.get("OPEN5GS_K8S_SSH_PASSWORD", "") or os.environ.get("OAI_K8S_SSH_PASSWORD", "") or ""
-            open5gs_sudo = os.environ.get("OPEN5GS_K8S_SUDO_PASSWORD", "") or os.environ.get("K8S_SUDO_PASSWORD", "") or open5gs_pw or ""
-            open5gs_kubeconf = os.environ.get("OPEN5GS_K8S_ADMIN_CONF", "") or os.environ.get("OAI_K8S_ADMIN_CONF", "/etc/kubernetes/admin.conf") or "/etc/kubernetes/admin.conf"
-            adapter_5gs = KubectlOpen5gsCoreAdapter(
-                k8s_map_5gs,
-                ssh_host=open5gs_k8s_host,
-                ssh_user=open5gs_user,
-                ssh_password=open5gs_pw,
-                sudo_password=open5gs_sudo,
-                ssh_port=open5gs_port,
-                namespace=open5gs_ns,
-                kubeconfig=open5gs_kubeconf,
-            )
-            open5gs_desc = "open5gs 5G Core"
-        except Exception as e:
-            print(f"[open5gs K8s] fallback mock due to {e}", flush=True)
-            adapter_5gs = CoreAdapter()
-            open5gs_desc = "open5gs 5G Core (fallback mock — env K8s invalid)"
-    if adapter_5gs is None:
-        open5gs_raw = os.environ.get("OPEN5GS_CORE_CONTAINERS", "")
-        open5gs_docker_host = os.environ.get("OPEN5GS_DOCKER_HOST", "") or None
-        if open5gs_raw:
-            try:
-                container_map = json.loads(open5gs_raw)
-                adapter_5gs = DockerCoreAdapter(container_map, docker_host=open5gs_docker_host)
-                open5gs_desc = "open5gs 5G Core (Docker Engine API)"
-            except Exception:
-                adapter_5gs = CoreAdapter()
-                open5gs_desc = "open5gs 5G Core (mock fallback)"
-        else:
-            adapter_5gs = CoreAdapter()
-            open5gs_desc = "open5gs 5G Core (mock)"
-    providers["open5gs"] = {
-        "label": "open5gs",
-        "icon": "dns",
-        "desc": open5gs_desc,
-        "adapter": adapter_5gs,
-    }
-
-    # --- open5gs-systemd: Open5GS bare-metal via systemd (node `core`, 10.91.2.151) ---
-    # Testbed bare-metal 3 PC (lihat DOKUMENTASI-PROYEK-DASHBOARD-ORAN-
-    # KONTEKS-AGENT.md §4.5/§9): Open5GS v2.8.0 jalan sebagai systemd unit
-    # langsung di OS, BUKAN Docker/K8s. Provider terpisah dari "open5gs" di
-    # atas (yang masih K8s/Docker/mock) supaya tidak mengganggu jalur lama —
-    # keduanya boleh hidup berdampingan di tab Core.
+    # --- Open5GS bare-metal via systemd (node `core`, 10.91.2.151) — SATU-SATUNYA provider Core ---
     systemd_host = os.environ.get("OPEN5GS_SYSTEMD_SSH_HOST", "") or None
     if systemd_host:
         try:
@@ -2918,32 +2776,33 @@ def _build_core_providers() -> dict:
                 sudo_password=os.environ.get("OPEN5GS_SYSTEMD_SUDO_PASSWORD", ""),
                 ssh_key_path=os.environ.get("OPEN5GS_SYSTEMD_SSH_KEY_PATH", "") or None,
             )
-            systemd_desc = "open5gs 5G Core (bare-metal systemd via SSH)"
+            systemd_desc = "Open5GS 5G Core — AMF/SMF/UPF/NRF/AUSF/UDM/UDR/PCF/NSSF/SCP/BSF (systemd)"
         except Exception as e:
-            print(f"[open5gs-systemd] fallback mock due to {e}", flush=True)
+            print(f"[open5gs] fallback mock due to {e}", flush=True)
             adapter_systemd = CoreAdapter()
-            systemd_desc = "open5gs 5G Core (fallback mock — env systemd invalid)"
-        providers["open5gs-systemd"] = {
-            "label": "open5GS (bare-metal)",
-            "icon": "dns",
-            "desc": systemd_desc,
-            "adapter": adapter_systemd,
-        }
+            systemd_desc = "Open5GS 5G Core (fallback mock — env systemd invalid)"
+    else:
+        adapter_systemd = CoreAdapter()
+        systemd_desc = "Open5GS 5G Core (mock — isi OPEN5GS_SYSTEMD_SSH_HOST untuk data nyata)"
 
-    # --- K8s 5GC & Magma: hidden (2026-08-27) ---
-    # Provider "k8s" (OAI K8s) dan "magma" sengaja TIDAK diregistrasi
-    # agar tab Core hanya menampilkan oai/open5gs (permintaan Ardeezy via Bill).
-    # Kode adapter tetap ada (SshK8sCoreAdapter/MagmaCoreAdapter) untuk dipakai
-    # lagi kapan pun — cukup uncomment blok di bawah dan aktifkan kembali.
-    # --- K8s 5GC (read-only fase 1, via SSH kubectl ke master) - DISABLED ---
-    # from k8s_adapter import SshK8sCoreAdapter
-    # k8s_ssh_host = os.environ.get("K8S_SSH_HOST", "") or None
-    # ... (hidden)
-    # providers["k8s"] = {...}
-    # --- Magma (Orc8R) - DISABLED ---
-    # magma_url = os.environ.get("MAGMA_ORC8R_URL", "")
-    # magma_adapter = MagmaCoreAdapter(...)
-    # providers["magma"] = {...}
+    providers["open5gs"] = {
+        "label": "Open5GS",
+        "icon": "dns",
+        "desc": systemd_desc,
+        "adapter": adapter_systemd,
+    }
+
+    # --- OAI 5G Core: PENDING, belum disambungkan ---
+    # OAI (Docker compose) ingin bind port host yang SAMA dengan Open5GS yang
+    # sedang live: AMF 10.91.2.151:38412/sctp, SMF :8805/udp, UPF :2152/udp
+    # (lihat /home/core/oai-cn5g-fed/docker-compose/docker-compose-telmat-
+    # hostip.yaml). Open5GS systemd sudah LISTEN di port-port itu sekarang —
+    # menyalakan OAI Docker akan gagal bind (port already in use) ATAU butuh
+    # mengubah port/konfigurasi salah satu Core, yang berarti mempengaruhi
+    # Open5GS yang sedang jalan. Diputuskan PENDING per instruksi pemilik
+    # (3 Nov 2026) — jangan diaktifkan tanpa strategi port terpisah yang
+    # disetujui (mis. VLAN/IP kedua di node core, atau jadwal bergantian
+    # seperti RAN/gNB).
 
     return providers
 
