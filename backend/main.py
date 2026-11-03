@@ -1278,10 +1278,11 @@ def cancel_reservation(domain: str, comp_id: str, reservation_id: str, user: str
 
 
 # ---------------------------------------------------------------------------
-# Hybrid Core↔RAN connect (go live) — Core ns scale + RAN gNB AMF retarget
+# Hybrid Core↔RAN connect (go live) — bare-metal 3 PC, bukan K8s.
+# Logika SSH/retarget sepenuhnya di ran_hybrid.py; endpoint di sini hanya
+# gating (booking/RBAC) + audit log, memanggil connect_ran_to_core/disconnect_ran.
 # ---------------------------------------------------------------------------
-from ran_hybrid import CORE_RAN_MAP, RAN_MAP, core_status_snapshot, ran_status_snapshot, _ssh_exec, _RAN_CONNECT_LOCK
-import shlex as _shlex
+from ran_hybrid import CORE_RAN_MAP, RAN_MAP, core_status_snapshot, ran_status_snapshot, connect_ran_to_core, disconnect_ran, _RAN_CONNECT_LOCK
 
 class RanConnectRequest(BaseModel):
     core_provider: str
@@ -1290,7 +1291,7 @@ class RanConnectRequest(BaseModel):
 
 @app.get("/api/ran/status")
 def ran_status(current_user: str = Depends(require_user)):
-    """GET /api/ran/status -> kubectl get deploy + systemctl is-active + ss sctp."""
+    """GET /api/ran/status -> systemctl is-active (core+ran) + ss --sctp 38412 (bare-metal)."""
     try:
         core = core_status_snapshot()
     except Exception as e:
@@ -1322,10 +1323,11 @@ def ran_status(current_user: str = Depends(require_user)):
 
 @app.post("/api/ran/connect")
 def ran_connect(body: RanConnectRequest, request: Request, current_user: str = Depends(require_operator)):
-    """Hybrid Core<->RAN connect: scale core deploys + retarget RAN gNB AMF + restart unit.
+    """Hybrid Core<->RAN connect (bare-metal): stop kedua unit gNB (1x USRP
+    B210), retarget AMF di config RAN terpilih, start unit terpilih.
     Gate: only user with active booking session can connect (admin bypass).
+    Seluruh logika SSH/retarget ada di ran_hybrid.connect_ran_to_core().
     """
-    # --- Booking gate ---
     is_admin = (current_user == "admin" or get_user_role(current_user) == "admin")
     if not is_admin:
         active = booking_svc.get_my_active_reservation(current_user)
@@ -1336,143 +1338,22 @@ def ran_connect(body: RanConnectRequest, request: Request, current_user: str = D
     dry_run = bool(body.dry_run)
     if not core_provider or not ran_provider:
         raise HTTPException(400, "core_provider and ran_provider required")
-    if core_provider not in CORE_RAN_MAP:
-        raise HTTPException(400, f"Unknown core_provider '{core_provider}'. Valid: {list(CORE_RAN_MAP.keys())}")
-    if ran_provider not in RAN_MAP:
-        raise HTTPException(400, f"Unknown ran_provider '{ran_provider}'. Valid: {list(RAN_MAP.keys())}")
     if not dry_run and not _RAN_CONNECT_LOCK.acquire(blocking=False):
         raise HTTPException(409, "another_connect_in_progress")
     try:
-        core_info = CORE_RAN_MAP[core_provider]
-        ran_info = RAN_MAP[ran_provider]
-        target_amf_ip = core_info.get("amf_ip", "")
-        target_amf_port = core_info.get("amf_port", 38412)
+        result = connect_ran_to_core(core_provider, ran_provider, current_user, dry_run=dry_run)
         if dry_run:
-            return {
-                "status": "dry_run",
-                "dry_run": True,
-                "core": {
-                    "requested_provider": core_provider,
-                    "active_ns": core_info.get("ns"),
-                    "svc": core_info.get("svc"),
-                    "nodeport": core_info.get("nodeport"),
-                    "cluster_ip": core_info.get("cluster_ip"),
-                    "action": f"scale deploys in ns {core_info.get('ns')} to 1, others to 0" if core_info.get("ns") else "scale all cores to 0 (magma)",
-                },
-                "ran": {
-                    "requested_provider": ran_provider,
-                    "unit": ran_info.get("unit"),
-                    "config_path": ran_info.get("config") or ran_info.get("primary_config"),
-                    "configs": ran_info.get("configs") or [ran_info.get("config")],
-                    "amf_addr_set": f"{target_amf_ip}:{target_amf_port}" if target_amf_ip else "none (magma)",
-                    "action": f"stop both units, sed AMF to {target_amf_ip}:{target_amf_port}, start {ran_info.get('unit')}" if target_amf_ip else f"stop both units (magma, no AMF)",
-                },
-                "sctp_estab": False,
-            }
-        master_host = os.environ.get("OAI_K8S_SSH_HOST", "10.91.2.156")
-        master_user = os.environ.get("OAI_K8S_SSH_USER", "telmat")
-        master_pw = os.environ.get("OAI_K8S_SSH_PASSWORD", os.environ.get("K8S_SUDO_PASSWORD","123"))
-        master_port = int(os.environ.get("OAI_K8S_SSH_PORT", "22"))
-        sudo_pw = os.environ.get("K8S_SUDO_PASSWORD", master_pw)
-        kube = os.environ.get("OAI_K8S_ADMIN_CONF", "/etc/kubernetes/admin.conf")
-        scale_results = {}
-        for key, info in CORE_RAN_MAP.items():
-            ns = info.get("ns")
-            if not ns:
-                continue
-            desired = 1 if key == core_provider else 0
-            if core_provider == "magma":
-                desired = 0
-            deploys = info.get("deployments", [])
-            for dep in deploys:
-                try:
-                    cmd = f"kubectl --kubeconfig={kube} -n {ns} scale deploy {dep} --replicas={desired} 2>&1"
-                    out, err, code = _ssh_exec(master_host, master_user, master_pw, master_port, cmd, sudo_pw=sudo_pw)
-                    scale_results[f"{ns}/{dep}"] = {"desired": desired, "out": (out+err)[:300], "code": code}
-                except Exception as e:
-                    scale_results[f"{ns}/{dep}"] = {"desired": desired, "error": str(e)[:300]}
-        time.sleep(2)
-        ran_host = os.environ.get("OAI_SSH_RAN_HOST", "10.91.2.152")
-        ran_user = os.environ.get("OAI_SSH_RAN_USER", "ran")
-        ran_pw = os.environ.get("OAI_SSH_RAN_PASSWORD", "telmat123")
-        ran_port = int(os.environ.get("OAI_SSH_RAN_PORT", "22"))
-        ran_actions = {}
-        try:
-            for unit in ["srsgnb.service", "oai-gnb.service"]:
-                try:
-                    full = f"echo {_shlex.quote(ran_pw)} | sudo -S -p '' systemctl stop {unit} 2>&1; echo __CODE__$?"
-                    out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, full, timeout=30)
-                    ran_actions[f"stop_{unit}"] = (out+err)[:400]
-                except Exception as e:
-                    ran_actions[f"stop_{unit}"] = str(e)[:400]
-            try:
-                out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, "pkill -9 -x gnb 2>&1; pkill -9 nr-softmodem 2>&1; sleep 2; echo done", timeout=15)
-                ran_actions["pkill"] = (out+err)[:400]
-            except Exception as e:
-                ran_actions["pkill"] = str(e)[:400]
-            amf_set = ""
-            if target_amf_ip:
-                if ran_provider == "srsran":
-                    cfg = ran_info["config"]
-                    py = f"python3 -c \"import re, pathlib; p='{cfg}'; t=pathlib.Path(p).read_text(); t=re.sub(r'(amf:\\\\s*\\\\n\\\\s*addr:\\\\s*)[0-9.]+', r'\\\\g<1>{target_amf_ip}', t); t=re.sub(r'(amf:\\\\s*\\\\n\\\\s*addr:[^\\\\n]*\\\\n\\\\s*port:\\\\s*)[0-9]+', r'\\\\g<1>{target_amf_port}', t); pathlib.Path(p).write_text(t); print('srs_ok:'+open(p).read().split('addr:')[1][:60])\" 2>&1"
-                    try:
-                        out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, py, timeout=15)
-                        ran_actions["sed_srsran"] = (out+err)[:600]
-                        amf_set = f"{target_amf_ip}:{target_amf_port}"
-                    except Exception as e:
-                        ran_actions["sed_srsran"] = str(e)[:600]
-                        raise HTTPException(500, f"srsran_sed_failed: {e}")
-                else:
-                    configs = ran_info.get("configs", [ran_info.get("primary_config")])
-                    for cfg in configs:
-                        sed_cmd = f"sed -i 's/amf_ip_address = ({{ ipv4 = \\\"[^\\\"]*\\\"/amf_ip_address = ({{ ipv4 = \\\"{target_amf_ip}\\\" /' {cfg} 2>&1; echo {cfg}:$?"
-                        try:
-                            out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, sed_cmd, timeout=15)
-                            ran_actions[f"sed_{cfg}"] = (out+err)[:400]
-                        except Exception as e:
-                            ran_actions[f"sed_{cfg}"] = str(e)[:400]
-                    amf_set = target_amf_ip
-            else:
-                amf_set = "none (magma)"
-            sctp_estab = False
-            sctp_lines = []
-            if target_amf_ip:
-                unit = ran_info["unit"]
-                try:
-                    full = f"echo {_shlex.quote(ran_pw)} | sudo -S -p '' systemctl start {unit} 2>&1; echo __START__$?; sleep 4; sudo ss -Sn 2>/dev/null | grep -E ':38412|:32112|:30615|:30412' | head -20"
-                    out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, full, timeout=35)
-                    ran_actions[f"start_{unit}"] = (out+err)[:900]
-                    if "ESTAB" in out:
-                        sctp_estab = True
-                        sctp_lines = [l for l in out.splitlines() if "ESTAB" in l]
-                except Exception as e:
-                    ran_actions[f"start_{unit}"] = str(e)[:600]
-                    raise HTTPException(500, f"start_failed: {e}")
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(500, f"ran_connect_failed: {e}")
-        try:
-            out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, "sudo ss -Sn 2>/dev/null | grep -E ':38412|:32112|:30615|:30412' | head -20", timeout=10)
-            sctp_estab = "ESTAB" in out
-            sctp_lines = [l.strip() for l in out.splitlines() if l.strip()]
-        except:
-            pass
-        active_ns = core_info.get("ns")
-        svc = core_info.get("svc")
-        cluster_ip = core_info.get("cluster_ip")
-        nodeport = core_info.get("nodeport")
+            return result
+        amf_set = result.get("ran", {}).get("amf_addr_set", "")
         try:
             with get_db_session() as db:
                 row = db.query(ActiveProviderModel).filter(ActiveProviderModel.domain=="core").first()
                 if row:
-                    row.provider = core_provider if core_provider != "magma" else row.provider
+                    row.provider = core_provider
                     row.username = current_user
                     row.activated_at = time.time()
                 else:
-                    if core_provider != "magma":
-                        db.add(ActiveProviderModel(domain="core", provider=core_provider, username=current_user, activated_at=time.time()))
-            # also set ran active provider
+                    db.add(ActiveProviderModel(domain="core", provider=core_provider, username=current_user, activated_at=time.time()))
             with get_db_session() as db:
                 row2 = db.query(ActiveProviderModel).filter(ActiveProviderModel.domain=="ran").first()
                 if row2:
@@ -1485,41 +1366,24 @@ def ran_connect(body: RanConnectRequest, request: Request, current_user: str = D
             pass
         try:
             log_audit(current_user, "RAN_CONNECT", domain="ran", detail=f"core={core_provider} ran={ran_provider} amf={amf_set}")
-        except:
+        except Exception:
             pass
         try:
             log_activity(current_user, "connect", f"{current_user} connected {core_provider} ↔ {ran_provider} ({amf_set})")
-        except:
+        except Exception:
             pass
-        return {
-            "status": "connected" if sctp_estab else "started",
-            "core": {
-                "active_ns": active_ns,
-                "svc": svc,
-                "cluster_ip": cluster_ip,
-                "nodeport": nodeport,
-                "scale_results": scale_results,
-            },
-            "ran": {
-                "unit": ran_info.get("unit"),
-                "config_path": ran_info.get("config") or ran_info.get("primary_config"),
-                "amf_addr_set": amf_set,
-                "sctp_estab": sctp_estab,
-                "sctp_lines": sctp_lines,
-                "actions": ran_actions,
-            },
-            "sctp_estab": sctp_estab,
-        }
+        return result
     finally:
         if not dry_run:
             try:
                 _RAN_CONNECT_LOCK.release()
-            except:
+            except Exception:
                 pass
 
 @app.post("/api/ran/disconnect")
 def ran_disconnect(body: RanConnectRequest, request: Request, current_user: str = Depends(require_operator)):
-    """Hybrid Core<->RAN disconnect: scale target Core to 0 + stop RAN unit.
+    """Hybrid Core<->RAN disconnect (bare-metal): stop unit RAN terpilih.
+    Core (Open5GS systemd) selalu tetap jalan — tidak ada scale-to-zero.
     Gate: only user with active booking session can disconnect (admin bypass).
     """
     is_admin = (current_user == "admin" or get_user_role(current_user) == "admin")
@@ -1531,89 +1395,24 @@ def ran_disconnect(body: RanConnectRequest, request: Request, current_user: str 
     ran_provider = (body.ran_provider or "").strip()
     if not core_provider or not ran_provider:
         raise HTTPException(400, "core_provider and ran_provider required")
-    if core_provider not in CORE_RAN_MAP:
-        raise HTTPException(400, f"Unknown core_provider '{core_provider}'. Valid: {list(CORE_RAN_MAP.keys())}")
-    if ran_provider not in RAN_MAP:
-        raise HTTPException(400, f"Unknown ran_provider '{ran_provider}'. Valid: {list(RAN_MAP.keys())}")
     if not _RAN_CONNECT_LOCK.acquire(blocking=False):
         raise HTTPException(409, "another_connect_in_progress")
     try:
-        core_info = CORE_RAN_MAP[core_provider]
-        ran_info = RAN_MAP[ran_provider]
-        master_host = os.environ.get("OAI_K8S_SSH_HOST", "10.91.2.156")
-        master_user = os.environ.get("OAI_K8S_SSH_USER", "telmat")
-        master_pw = os.environ.get("OAI_K8S_SSH_PASSWORD", os.environ.get("K8S_SUDO_PASSWORD","123"))
-        master_port = int(os.environ.get("OAI_K8S_SSH_PORT", "22"))
-        sudo_pw = os.environ.get("K8S_SUDO_PASSWORD", master_pw)
-        kube = os.environ.get("OAI_K8S_ADMIN_CONF", "/etc/kubernetes/admin.conf")
-        scale_results = {}
-        ns = core_info.get("ns")
-        if ns:
-            for dep in core_info.get("deployments", []):
-                try:
-                    cmd = f"kubectl --kubeconfig={kube} -n {ns} scale deploy {dep} --replicas=0 2>&1"
-                    out, err, code = _ssh_exec(master_host, master_user, master_pw, master_port, cmd, sudo_pw=sudo_pw)
-                    scale_results[f"{ns}/{dep}"] = {"desired": 0, "out": (out+err)[:300], "code": code}
-                except Exception as e:
-                    scale_results[f"{ns}/{dep}"] = {"desired": 0, "error": str(e)[:300]}
-            time.sleep(1)
-        ran_host = os.environ.get("OAI_SSH_RAN_HOST", "10.91.2.152")
-        ran_user = os.environ.get("OAI_SSH_RAN_USER", "ran")
-        ran_pw = os.environ.get("OAI_SSH_RAN_PASSWORD", "telmat123")
-        ran_port = int(os.environ.get("OAI_SSH_RAN_PORT", "22"))
-        ran_actions = {}
-        unit = ran_info.get("unit")
-        try:
-            full = f"echo {_shlex.quote(ran_pw)} | sudo -S -p '' systemctl stop {unit} 2>&1; echo __CODE__$?"
-            out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, full, timeout=30)
-            ran_actions[f"stop_{unit}"] = (out+err)[:600]
-        except Exception as e:
-            ran_actions[f"stop_{unit}"] = str(e)[:600]
-        try:
-            out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, "pkill -9 -x gnb 2>&1; pkill -9 nr-softmodem 2>&1; sleep 1; echo done", timeout=15)
-            ran_actions["pkill"] = (out+err)[:400]
-        except Exception as e:
-            ran_actions["pkill"] = str(e)[:400]
-        try:
-            out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, "sudo ss -Sn 2>/dev/null | grep -E ':38412|:32112|:30615|:30412' | head -20", timeout=10)
-            sctp_lines = [l.strip() for l in out.splitlines() if l.strip()]
-            sctp_estab = "ESTAB" in out
-        except:
-            sctp_lines = []
-            sctp_estab = False
-        active_ns = core_info.get("ns")
-        svc = core_info.get("svc")
-        cluster_ip = core_info.get("cluster_ip")
-        nodeport = core_info.get("nodeport")
+        result = disconnect_ran(core_provider, ran_provider, current_user)
+        unit = result.get("ran", {}).get("unit", "")
         try:
             log_audit(current_user, "RAN_DISCONNECT", domain="ran", detail=f"core={core_provider} ran={ran_provider} unit={unit}")
-        except:
+        except Exception:
             pass
         try:
             log_activity(current_user, "connect", f"{current_user} disconnected {core_provider} ↔ {ran_provider}")
-        except:
+        except Exception:
             pass
-        return {
-            "status": "disconnected",
-            "core": {
-                "active_ns": active_ns,
-                "svc": svc,
-                "cluster_ip": cluster_ip,
-                "nodeport": nodeport,
-                "scale_results": scale_results,
-            },
-            "ran": {
-                "unit": unit,
-                "sctp_estab": sctp_estab,
-                "sctp_lines": sctp_lines,
-                "actions": ran_actions,
-            },
-            "sctp_estab": sctp_estab,
-        }
+        return result
     finally:
         try:
             _RAN_CONNECT_LOCK.release()
-        except:
+        except Exception:
             pass
 
 @app.websocket("/ws/ssh/{domain}/{comp_id}")
