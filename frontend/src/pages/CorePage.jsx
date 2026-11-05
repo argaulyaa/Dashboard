@@ -248,11 +248,13 @@ export default function CorePage({ components, currentUser, onSelect, onRestart,
   // Provider yang sedang aktif secara eksplisit (atau null).
   const activatedKey = activeActivation?.provider || null;
   const activatedLabel = providers.find((p) => p.key === activatedKey)?.label || activatedKey;
-  // SYNC FIX: tombol Activate/Deactivate sinkron dengan status ONLINE/OFFLINE (health), bukan cuma active_providers
-  // online = healthy/degraded dari pod K8s; kalau belum ada yang di-activate (null), ikut health biar ONLINE→Deactivate
-  const _healthForButton = (()=>{ try{return domainHealth(displayedComponents);}catch{return "down"} })();
-  const _isOnlineForButton = _healthForButton !== "down";
-  const isActiveTab = activatedKey != null ? (activatedKey === activeProvider) : _isOnlineForButton;
+  // FIX 5 Nov 2026: hapus fallback "ikut health" peninggalan era K8s (komentar
+  // lama: "online = healthy/degraded dari pod K8s"). Di bare-metal, Open5GS
+  // SELALU online secara fisik terlepas dari status aktivasi dashboard, jadi
+  // fallback itu membuat tombol permanen "Deactivate" dan user tidak pernah
+  // bisa menekan "Activate" untuk menulis bookkeeping DB (blocker utk gate
+  // RAN "Core harus aktif dulu"). Sekarang murni ikut status aktivasi DB.
+  const isActiveTab = activatedKey != null && activatedKey === activeProvider;
   const isBusy = activationBusy;
 
   // Current Operator — F2: sumber kebenaran = status AKTIVASI eksplisit
