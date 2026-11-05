@@ -1456,10 +1456,14 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
         await ws.close()
         return
 
+    provider_q = ws.query_params.get("provider", "") or ""
     try:
-        adapter = _get_adapter(domain)  # default provider
-    except HTTPException:
-        await ws.send_text(f"\r\n[domain '{domain}' has no adapter]\r\n")
+        adapter = _get_adapter(
+            domain,
+            provider_q if domain == "core" and provider_q else None,
+        )
+    except HTTPException as e:
+        await ws.send_text(f"\r\n[{e.detail}]\r\n")
         await ws.close()
         return
 
@@ -1485,13 +1489,26 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
         await ws.close()
         return
 
-    # OAI provider from query ?provider=oai (ControlDrawer/ConsoleTerminal)
-    provider_q = ""
-    try:
-        provider_q = ws.query_params.get("provider", "") or ""
-    except Exception:
-        provider_q = ""
+    # Open5GS host-shell access uses the authenticated session, not a username
+    # supplied by the browser, because the backend holds the SSH private key.
+    is_open5gs_systemd = domain == "core" and provider_q == "open5gs"
     dashboard_user = init.get("user", "")
+    if is_open5gs_systemd:
+        token = init.get("token", "")
+        try:
+            session = get_session_info(f"Bearer {token}")
+            dashboard_user = session["user"]
+            if session.get("role") not in ("user", "admin"):
+                raise HTTPException(403, "operator_role_required")
+        except HTTPException as e:
+            await ws.send_text(f"\r\n[access denied: {e.detail}]\r\n")
+            await ws.close()
+            return
+        configured_units = getattr(adapter, "_units", {})
+        if comp_id not in configured_units:
+            await ws.send_text("\r\n[unknown Open5GS systemd component]\r\n")
+            await ws.close()
+            return
     # JEK OAI ONLY: global booking gate — Active Session apapun untuk user ini boleh Console, gak perlu domain/comp_id match
     # cek booking global dulu (booking.py), fallback ke per-component reservations
     import booking as _bk
@@ -1508,11 +1525,29 @@ async def ssh_ws(ws: WebSocket, domain: str, comp_id: str):
     # JEK OAI ONLY: kalau Core OAI 5GC, arahkan console ke terminal pod deployment (bukan host shell biasa)
     # host 10.91.2.156 adalah master K8s; pod OAI ada di ns 5g-core deployment oai-* . User tetap wajib reservasi (cek di atas).
     # JEK: OAI AMF pod auto-discovery via label — jangan hardcode pod hash, cari pod Running di ns dari CORE_RAN_MAP
-    is_core_pod = (domain == "core" and provider_q in ("oai","open5gs") and comp_id in (DEFAULT_OAI_K8S_COMPONENT_MAP if provider_q=="oai" else DEFAULT_OPEN5GS_K8S_COMPONENT_MAP)) or (domain == "core" and not provider_q and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP)
+    is_core_pod = (domain == "core" and provider_q == "oai" and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP) or (domain == "core" and not provider_q and comp_id in DEFAULT_OAI_K8S_COMPONENT_MAP)
     is_ran = (domain == "ran")
     is_ric_core = (domain == "ric")
     is_oai_core = is_core_pod
-    if is_ran:
+    if is_open5gs_systemd:
+        ssh_host = os.environ.get("OPEN5GS_SYSTEMD_SSH_HOST", "").strip()
+        ssh_user = os.environ.get("OPEN5GS_SYSTEMD_SSH_USER", "core").strip()
+        ssh_port = int(os.environ.get("OPEN5GS_SYSTEMD_SSH_PORT", "22"))
+        key_path = os.environ.get("OPEN5GS_SYSTEMD_SSH_KEY_PATH", "").strip()
+        if not ssh_host or not key_path:
+            await ws.send_text(
+                "\r\n[Open5GS console unavailable: set OPEN5GS_SYSTEMD_SSH_HOST and OPEN5GS_SYSTEMD_SSH_KEY_PATH on the backend]\r\n"
+            )
+            await ws.close()
+            return
+        await run_ssh_bridge(
+            ws,
+            host=ssh_host,
+            port=ssh_port,
+            username=ssh_user,
+            key_path=key_path,
+        )
+    elif is_ran:
         # RAN: SSH ke host RAN 10.91.2.152 (nr-softmodem/srsRAN gNB) — bukan K8s pod
         ran_host = os.environ.get("OAI_SSH_RAN_HOST", os.environ.get("SRSRAN_SSH_HOST", "10.91.2.152"))
         ran_user = os.environ.get("OAI_SSH_RAN_USER", os.environ.get("SRSRAN_SSH_USER", "ran")) or "ran"
