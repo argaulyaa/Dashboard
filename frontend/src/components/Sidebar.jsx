@@ -58,7 +58,7 @@ export default function Sidebar({ currentUser, fullName: fullNameProp, onUserCha
     <aside className="fixed left-0 top-0 h-full w-sidebar-width bg-surface shadow-[0_4px_12px_rgba(0,0,0,0.06)] flex-col border-r border-outline-variant hidden md:flex z-50">
       <div className="p-gutter flex items-center gap-3">
         <div className="w-10 h-10 bg-primary-container rounded-lg flex items-center justify-center text-white shrink-0">
-          <span className="material-symbols-outlined text-title-lg">settings_input_antenna</span>
+          <img src="/favicon.png" alt="Open RAN" className="w-full h-full rounded-lg object-contain" />
         </div>
         <div>
           <h1 className="font-title-lg text-title-lg font-bold text-primary leading-tight">Open RAN</h1>
