@@ -236,15 +236,23 @@ def ran_status_snapshot():
 
 def _rewrite_srsran_amf(ran_host, ran_user, ran_pw, ran_port, config_path, amf_ip, amf_port):
     """Ganti field cu_cp.amf.addr/port di file YAML srsRAN via python re.sub
-    dijalankan remote (tidak ada state lokal, file tetap di node ran)."""
+    dijalankan remote (tidak ada state lokal, file tetap di node ran).
+
+    FIX 5 Nov 2026: versi sebelumnya pakai string replacement `\\g<1>` yang
+    salah jumlah escape backslash (lolos lint tapi SALAH saat dieksekusi —
+    baru ketahuan setelah actuation RAN pertama kali benar-benar jalan lewat
+    tombol dashboard, merusak file YAML jadi literal `\\g<1>10.91.2.151` alih-
+    alih tersubstitusi). Sekarang pakai replacement FUNCTION (lambda), bukan
+    string backreference, supaya tidak ada lagi masalah escaping backslash.
+    """
     script = (
         "import re\n"
         f"p = {config_path!r}\n"
         "t = open(p, encoding='utf-8').read()\n"
         "t2 = re.sub(r'(cu_cp:\\s*\\n\\s*amf:\\s*\\n\\s*addr:\\s*)[0-9.]+', "
-        f"r'\\\\g<1>{amf_ip}', t, count=1)\n"
+        f"lambda m: m.group(1) + {amf_ip!r}, t, count=1)\n"
         "t3 = re.sub(r'(cu_cp:\\s*\\n\\s*amf:\\s*\\n\\s*addr:[^\\n]*\\n\\s*port:\\s*)[0-9]+', "
-        f"r'\\\\g<1>{amf_port}', t2, count=1)\n"
+        f"lambda m: m.group(1) + {str(amf_port)!r}, t2, count=1)\n"
         "changed = (t3 != t)\n"
         "open(p, 'w', encoding='utf-8').write(t3)\n"
         "print('OK' if changed else 'NOCHANGE')\n"
@@ -256,13 +264,14 @@ def _rewrite_srsran_amf(ran_host, ran_user, ran_pw, ran_port, config_path, amf_i
 
 def _rewrite_oai_amf(ran_host, ran_user, ran_pw, ran_port, config_path, amf_ip):
     """Ganti amf_ip_address di config OAI (.conf, format libconfig) via
-    python re.sub remote — pola sama, tanpa sed -i."""
+    python re.sub remote — pola sama, tanpa sed -i. Replacement FUNCTION
+    (lihat catatan FIX di _rewrite_srsran_amf di atas — bug escaping sama)."""
     script = (
         "import re\n"
         f"p = {config_path!r}\n"
         "t = open(p, encoding='utf-8').read()\n"
         "t2 = re.sub(r'(amf_ip_address\\s*=\\s*\\(\\{\\s*ipv4\\s*=\\s*\")[^\"]*(\")', "
-        f"r'\\\\g<1>{amf_ip}\\\\g<2>', t, count=1)\n"
+        f"lambda m: m.group(1) + {amf_ip!r} + m.group(2), t, count=1)\n"
         "changed = (t2 != t)\n"
         "open(p, 'w', encoding='utf-8').write(t2)\n"
         "print('OK' if changed else 'NOCHANGE')\n"
