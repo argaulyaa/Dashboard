@@ -74,9 +74,14 @@ RAN_MAP = {
         "amf_path": ["cu_cp", "amf", "addr"],  # lokasi field AMF addr di YAML
     },
     "oai": {
-        "unit": "oai-gnb.service",
-        # OAI tidak pakai env file switch — config langsung di ExecStart.
-        "config": "/home/ran/gnb-telmat-51prb-3489.conf",
+        # Diupdate 5 Nov 2026: production OAI sekarang unit "oai-gnb-n40.service"
+        # (bukan "oai-gnb.service" lama yg pakai config band 78) + binary build
+        # develop-Nov2026 (fix PUCCH resource-selection + SSB offset — lihat
+        # skill openran-dashboard-testbed §Critical Context). Config band n40,
+        # 51 PRB/20MHz, terverifikasi 12.74 Mbps dgn Oppo Reno 8. E2 agent
+        # sengaja nonaktif (incompatible dgn FlexRIC RIC versi lama, PENDING).
+        "unit": "oai-gnb-n40.service",
+        "config": "/home/ran/gnb-proven-441s-lowgain-v2.conf",
         "amf_field": "amf_ip_address",  # format: amf_ip_address = ({ ipv4 = "X"; });
     },
 }
@@ -167,12 +172,12 @@ def ran_status_snapshot():
     try:
         cmd = (
             "systemctl is-active srsran-gnb.service 2>&1; echo __S1__; "
-            "systemctl is-active oai-gnb.service 2>&1; echo __S2__; "
+            "systemctl is-active oai-gnb-n40.service 2>&1; echo __S2__; "
             "ps -eo args 2>/dev/null | grep -E 'apps/gnb/gnb|nr-softmodem' | grep -v grep | head -5; echo __S3__; "
             "ss --sctp -an 2>/dev/null | grep ':38412' | head -20; echo __S4__; "
             "cat /etc/default/srsran-gnb 2>/dev/null; echo __S5__; "
             "grep -A2 'amf:' /home/ran/srsran-configs/*.yaml 2>/dev/null | grep addr | head -5; "
-            "grep -E 'amf_ip_address' /home/ran/gnb-telmat-51prb-3489.conf 2>/dev/null | head -3; echo __END__"
+            "grep -E 'amf_ip_address' /home/ran/gnb-proven-441s-lowgain-v2.conf 2>/dev/null | head -3; echo __END__"
         )
         out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, cmd, timeout=20)
 
@@ -342,7 +347,7 @@ def connect_ran_to_core(core_provider: str, ran_provider: str, requested_by: str
     ran_actions = {}
 
     # 1) stop kedua unit (hanya 1 boleh hidup — 1x USRP B210)
-    for unit in ("srsran-gnb.service", "oai-gnb.service"):
+    for unit in ("srsran-gnb.service", "oai-gnb-n40.service"):
         try:
             full = f"systemctl stop {unit} 2>&1; echo __CODE__$?"
             out, err, code = _ssh_exec(ran_host, ran_user, ran_pw, ran_port, full, sudo_pw=sudo_pw, timeout=30)

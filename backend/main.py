@@ -238,9 +238,12 @@ def activate_provider(
     `provider_active`. Client HARUS deactivate dulu sebelum activate provider
     baru. Re-activate provider yang sama tetap idempotent (200).
 
-    Catatan Fase 1: aktivasi masih bookkeeping DB — tidak menyentuh testbed
-    (tidak ada actuation core/RAN; itu Fase 2/3 via B2-B5 dengan env
-    ALLOW_DB_ONLY_ACTIVATION sebagai kill-switch semantik akting)."""
+    Domain "ran" (ditambahkan 5 Nov 2026): SEKARANG actuation NYATA, bukan
+    cuma bookkeeping DB — reuse ran_hybrid.connect_ran_to_core() (stop kedua
+    unit gNB -> retarget AMF -> start unit terpilih -> verifikasi SCTP), sama
+    persis logika yang dipakai /api/ran/connect. Core default "open5gs"
+    (satu-satunya provider Core live di testbed ini). Domain "core" MASIH
+    bookkeeping-only (cuma 1 provider live, belum ada switching nyata)."""
     providers = DOMAINS.get(domain)
     if not providers:
         raise HTTPException(404, f"Unknown domain '{domain}'")
@@ -266,9 +269,23 @@ def activate_provider(
                     "message": (
                         f"Provider '{active_provider}' masih aktif di domain "
                         f"'{domain}'. Matikan dulu sebelum mengaktifkan "
-                        f"'{body.provider}'."),
+                        f"'{body.provider}'.",),
                 },
             )
+    # Actuation NYATA utk domain "ran": nyalakan gNB via SSH sebelum DB ditulis
+    # (DB cuma di-commit kalau actuation sukses, supaya DB tidak pernah bohong).
+    amf_addr_set = None
+    if domain == "ran":
+        from ran_hybrid import connect_ran_to_core, _RAN_CONNECT_LOCK
+        if not _RAN_CONNECT_LOCK.acquire(blocking=False):
+            raise HTTPException(409, "another_connect_in_progress")
+        try:
+            result = connect_ran_to_core("open5gs", body.provider, current_user, dry_run=False)
+            amf_addr_set = result.get("ran", {}).get("amf_addr_set", "")
+        finally:
+            _RAN_CONNECT_LOCK.release()
+    with get_db_session() as db:
+        row = db.query(ActiveProviderModel).filter(ActiveProviderModel.domain == domain).first()
         now = time.time()
         if row:
             row.provider = body.provider
@@ -282,7 +299,7 @@ def activate_provider(
                 activated_at=now,
             )
             db.add(row)
-    log_audit(current_user, "PROVIDER_ACTIVATE", domain=domain, detail=body.provider)
+    log_audit(current_user, "PROVIDER_ACTIVATE", domain=domain, detail=f"{body.provider}" + (f" amf={amf_addr_set}" if amf_addr_set else ""))
     return {
         "ok": True,
         "domain": domain,
@@ -294,9 +311,24 @@ def activate_provider(
 
 @app.post("/api/{domain}/deactivate-provider")
 def deactivate_provider(domain: str, current_user: str = Depends(require_operator)):
-    """Nonaktifkan provider yang sedang aktif untuk domain ini. User/admin only."""
+    """Nonaktifkan provider yang sedang aktif untuk domain ini. User/admin only.
+
+    Domain "ran" (5 Nov 2026): actuation NYATA — stop unit gNB via SSH
+    (ran_hybrid.disconnect_ran) SEBELUM baris DB dihapus."""
     if domain not in DOMAINS:
         raise HTTPException(404, f"Unknown domain '{domain}'")
+    if domain == "ran":
+        with get_db_session() as db:
+            row = db.query(ActiveProviderModel).filter(ActiveProviderModel.domain == "ran").first()
+            active_ran_provider = row.provider if row else None
+        if active_ran_provider:
+            from ran_hybrid import disconnect_ran, _RAN_CONNECT_LOCK
+            if not _RAN_CONNECT_LOCK.acquire(blocking=False):
+                raise HTTPException(409, "another_connect_in_progress")
+            try:
+                disconnect_ran("open5gs", active_ran_provider, current_user)
+            finally:
+                _RAN_CONNECT_LOCK.release()
     with get_db_session() as db:
         deleted = (
             db.query(ActiveProviderModel)
