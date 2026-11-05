@@ -198,8 +198,14 @@ export default function RanPage({ components, currentUser, onSelect, onRestart, 
   // lewat SSH belum sempat ke-detect poll pertama).
   const activatedKey = realActiveProviderKey ?? activeActivation?.provider ?? null;
   const activatedLabel = providers.find((p) => p.key === activatedKey)?.label || activatedKey;
-  // Fallback kayak Core: Active/Critical (gNB ada) => Deactivate, Offline (no gNB) => Activate
-  const isActiveTab = activatedKey != null ? activatedKey === activeProvider : displayedComponents.length > 0;
+  // Fallback: pakai HEALTH NYATA tab yang sedang dibuka (bukan cuma "ada data
+  // komponen"), supaya kalau gNB down, data tetap ada (status Inactive) tapi
+  // health-nya "down" -> tombol tetap "Activate", bukan "Deactivate" (bug
+  // ditemukan 5 Nov 2026: displayedComponents.length > 0 selalu true
+  // meski gNB mati karena API tetap mengembalikan objek status down).
+  const isActiveTab = activatedKey != null
+    ? activatedKey === activeProvider
+    : ["healthy", "degraded"].includes(domainHealth(displayedComponents));
   const isBusy = activationBusy;
 
   // Current Operator RAN — F3: sumber kebenaran = status AKTIVASI eksplisit
