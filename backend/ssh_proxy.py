@@ -8,16 +8,24 @@ from fastapi import WebSocket, WebSocketDisconnect
 READ_CHUNK = 4096
 
 
-def _open_channel(host: str, port: int, username: str, password: str):
+def _open_channel(host: str, port: int, username: str, password: str = "", key_path: str = None):
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    connect_options = {
+        "hostname": host,
+        "port": port,
+        "username": username,
+        "timeout": 10,
+        "banner_timeout": 10,
+        "allow_agent": False,
+        "look_for_keys": False,
+    }
+    if key_path:
+        connect_options["pkey"] = paramiko.Ed25519Key.from_private_key_file(key_path)
+    else:
+        connect_options["password"] = password
     client.connect(
-        hostname=host,
-        port=port,
-        username=username,
-        password=password,
-        timeout=10,
-        banner_timeout=10,
+        **connect_options,
     )
     channel = client.invoke_shell(term="xterm-256color")
     channel.settimeout(0.0)
@@ -41,10 +49,18 @@ def _reader_thread(channel, out_queue, stop_event):
     out_queue.put(None)
 
 
-async def run_ssh_bridge(ws: WebSocket, host: str, port: int, username: str, password: str, initial_cmd: str = None):
+async def run_ssh_bridge(
+    ws: WebSocket,
+    host: str,
+    port: int,
+    username: str,
+    password: str = "",
+    initial_cmd: str = None,
+    key_path: str = None,
+):
     try:
         client, channel = await asyncio.get_event_loop().run_in_executor(
-            None, _open_channel, host, port, username, password
+            None, _open_channel, host, port, username, password, key_path
         )
     except Exception as e:
         await ws.send_text(f"\r\n[gagal konek SSH: {e}]\r\n")
