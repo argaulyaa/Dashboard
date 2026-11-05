@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
+import { getToken } from "../auth.js";
 import "xterm/css/xterm.css";
 
 export default function SshTerminal({ domain, componentId, host, currentUser, provider }) {
@@ -51,7 +52,7 @@ export default function SshTerminal({ domain, componentId, host, currentUser, pr
     wsRef.current = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ user: currentUser, ...form }));
+      ws.send(JSON.stringify({ user: currentUser, token: getToken(), ...form }));
       setConnected(true);
     };
     ws.onmessage = (evt) => term.write(evt.data);
