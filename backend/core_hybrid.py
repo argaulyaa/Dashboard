@@ -147,6 +147,47 @@ def _start_provider(host, user, password, port, key_path, provider, actions):
     return False
 
 
+def deactivate_core_provider(requested_by: str, dry_run: bool = False):
+    """Matikan provider Core yang SECARA FISIK aktif sekarang, tanpa nyalain
+    yang lain (beda dari switch_core_provider yang selalu start target baru).
+
+    Ditambah 13 Nov 2026 - sebelum ini tombol "Deactivate" di halaman Core
+    cuma hapus baris bookkeeping DB, container/unit tetap nyala (gap yang
+    ketemu user pas live-test tombol dashboard). Sekarang mirror pola
+    ran_hybrid.disconnect_ran: actuation nyata (stop), bukan cuma DB."""
+    host, user, password, port, key_path = _core_ssh_creds()
+    status = core_provider_status()
+    if "error" in status:
+        raise HTTPException(500, f"core_status_check_failed: {status['error']}")
+
+    current = _current_physical_provider(status)
+
+    if dry_run:
+        return {
+            "status": "dry_run",
+            "dry_run": True,
+            "current_provider": current,
+            "action": "no-op (tidak ada provider yang aktif secara fisik)" if not current
+            else f"stop {current} sepenuhnya (tidak start apapun setelahnya)",
+        }
+
+    if not current:
+        return {"status": "noop", "current_provider": None}
+
+    actions = {}
+    _stop_provider(host, user, password, port, key_path, current, actions)
+    ok, remaining = _ports_free(host, user, password, port, key_path, CORE_EXCLUSIVE_PORTS)
+
+    return {
+        "status": "stopped",
+        "previous_provider": current,
+        "current_provider": None,
+        "ports_free": ok,
+        "remaining_ports": remaining if not ok else "",
+        "actions": actions,
+    }
+
+
 def switch_core_provider(target_provider: str, requested_by: str, dry_run: bool = False):
     """Exclusive switch Core software: 'open5gs' <-> 'oai'. Lihat alur di
     docstring modul. Raise HTTPException kalau gagal (dengan detail actions
