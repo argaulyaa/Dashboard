@@ -187,11 +187,11 @@ export default function ReservationPage({ currentUser }) {
         <form onSubmit={handleBook} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
           <div>
             <label className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Start</label>
-            <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} className="w-full mt-1 px-3 py-2 border border-outline-variant rounded-lg" />
+            <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} className="w-full mt-1 px-3 py-2 border border-outline-variant rounded-lg bg-surface-container-lowest text-on-surface" />
           </div>
           <div>
             <label className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">End</label>
-            <input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} className="w-full mt-1 px-3 py-2 border border-outline-variant rounded-lg" />
+            <input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} className="w-full mt-1 px-3 py-2 border border-outline-variant rounded-lg bg-surface-container-lowest text-on-surface" />
           </div>
           <button type="submit" disabled={loading} className="px-6 py-2 bg-primary text-white rounded-lg font-bold disabled:opacity-50 hover:bg-primary/90">
             {loading ? "Booking..." : "Book"}

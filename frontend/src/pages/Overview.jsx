@@ -207,7 +207,7 @@ export default function Overview({ data, currentUser, onSelect, onReservationCha
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
         <div>
           <h2 className="font-headline-lg text-headline-lg text-on-surface mb-1">
-            Welcome, {displayName}
+            Hello, {displayName}
           </h2>
           <p className="text-body-lg text-on-surface-variant">
             {dateLabel} &middot; {timeLabel}

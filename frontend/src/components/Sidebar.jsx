@@ -12,7 +12,14 @@ const NAV_ITEMS = [
   { to: "/audit-logs", label: "Audit Logs", icon: "shield" },
 ];
 
-export default function Sidebar({ currentUser, fullName: fullNameProp, onUserChange, onLogout }) {
+export default function Sidebar({
+  currentUser,
+  fullName: fullNameProp,
+  onUserChange,
+  onLogout,
+  darkMode,
+  onToggleTheme,
+}) {
   const role = getRole();
   const isAdmin = currentUser === "admin" || role === "admin";
 
@@ -65,8 +72,33 @@ export default function Sidebar({ currentUser, fullName: fullNameProp, onUserCha
           <p className="text-label-sm text-on-surface-variant opacity-70">Control Panel</p>
         </div>
       </div>
+      <div className="px-gutter mt-2 mb-3">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={darkMode}
+          aria-label="Dark theme"
+          onClick={onToggleTheme}
+          className="group flex w-full items-center gap-3 rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2.5 text-left transition-colors hover:bg-surface-container"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-container-high text-primary">
+            <span className="material-symbols-outlined text-xl">
+              {darkMode ? "dark_mode" : "light_mode"}
+            </span>
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold leading-5 text-on-surface">Appearance</span>
+            <span className="block text-xs leading-4 text-on-surface-variant">
+              {darkMode ? "Dark theme" : "Light theme"}
+            </span>
+          </span>
+          <span className={`relative h-6 w-10 shrink-0 rounded-full transition-colors ${darkMode ? "bg-primary" : "bg-outline-variant"}`}>
+            <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-surface-container-lowest shadow-sm transition-transform ${darkMode ? "translate-x-4" : ""}`} />
+          </span>
+        </button>
+      </div>
 
-      <nav className="mt-8 flex-grow">
+      <nav className="mt-2 flex-grow">
         {visibleNavItems.map((item) => (
           <NavLink
             key={item.to}
