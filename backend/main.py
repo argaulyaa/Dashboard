@@ -326,7 +326,13 @@ def deactivate_provider(domain: str, current_user: str = Depends(require_operato
     """Nonaktifkan provider yang sedang aktif untuk domain ini. User/admin only.
 
     Domain "ran" (5 Nov 2026): actuation NYATA — stop unit gNB via SSH
-    (ran_hybrid.disconnect_ran) SEBELUM baris DB dihapus."""
+    (ran_hybrid.disconnect_ran) SEBELUM baris DB dihapus.
+
+    Domain "core" (13 Nov 2026): actuation NYATA juga — sebelum ini tombol
+    Deactivate Core cuma hapus baris DB, container/unit tetap nyala (gap
+    ketemu saat user live-test tombol dashboard). Sekarang stop provider
+    yang fisik aktif via core_hybrid.deactivate_core_provider(), mirror
+    pola domain ran di atas."""
     if domain not in DOMAINS:
         raise HTTPException(404, f"Unknown domain '{domain}'")
     if domain == "ran":
@@ -341,6 +347,14 @@ def deactivate_provider(domain: str, current_user: str = Depends(require_operato
                 disconnect_ran("open5gs", active_ran_provider, current_user)
             finally:
                 _RAN_CONNECT_LOCK.release()
+    elif domain == "core":
+        from core_hybrid import deactivate_core_provider, _CORE_SWITCH_LOCK
+        if not _CORE_SWITCH_LOCK.acquire(blocking=False):
+            raise HTTPException(409, "another_core_switch_in_progress")
+        try:
+            deactivate_core_provider(current_user, dry_run=False)
+        finally:
+            _CORE_SWITCH_LOCK.release()
     with get_db_session() as db:
         deleted = (
             db.query(ActiveProviderModel)
