@@ -63,11 +63,20 @@ export default function App() {
   const [error, setError] = useState(null);
   const [currentUser, setCurrentUser] = useState(getUser());
   const [fullName, setFullName] = useState("");
+  const [darkMode, setDarkMode] = useState(
+    () => localStorage.getItem("oran-dashboard-theme") === "dark"
+  );
   const [opsCount, setOpsCount] = useState(0);
   const [lastTelemetryAt, setLastTelemetryAt] = useState(null);
   // Meta WS v2 (meta.active per domain + bindings) — dipakai Core/RanPage
   // sebagai sumber status aktivasi real-time (fallback REST saat reload).
   const [telemetryMeta, setTelemetryMeta] = useState(null);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode);
+    document.documentElement.style.colorScheme = darkMode ? "dark" : "light";
+    localStorage.setItem("oran-dashboard-theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
 
   useEffect(() => {
     (async () => {
@@ -174,6 +183,8 @@ const handleLogout = useCallback(() => {
           fullName={fullName}
           onUserChange={setCurrentUser}
           onLogout={handleLogout}
+          darkMode={darkMode}
+          onToggleTheme={() => setDarkMode((enabled) => !enabled)}
         />
         {/* TopBar HARUS di dalam PageHeaderProvider: dia baca header via
             usePageHeader() mode GET. Di luar provider, context-nya kosong dan
