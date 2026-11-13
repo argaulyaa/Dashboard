@@ -740,6 +740,7 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
 
     # ---- Determine SSH target + log command ----
     ssh_host = ssh_port = ssh_user = ssh_password = sudo_password = None
+    ssh_key_path = None
     kubeconfig = "/etc/kubernetes/admin.conf"
     namespace = "5g-core"
     inner_cmd = None
@@ -897,6 +898,14 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
         ssh_port = int(os.environ.get("OAI_SSH_PORT", "22") or 22)
         ssh_user = os.environ.get("OAI_SSH_USER", "core") or "core"
         ssh_password = os.environ.get("OAI_SSH_PASSWORD", "telmat123") or "telmat123"
+        # Node core (10.91.2.151) publickey-only (lihat skill openran-dashboard-
+        # testbed) — password auth akan selalu gagal ("Bad authentication type")
+        # tanpa key ini. Fallback ke OPEN5GS_SYSTEMD_SSH_KEY_PATH yang sudah
+        # dipakai adapter REST (adapters.py _exec) utk host yang sama.
+        ssh_key_path = (
+            os.environ.get("OAI_SSH_KEY_PATH", "")
+            or os.environ.get("OPEN5GS_SYSTEMD_SSH_KEY_PATH", "")
+        ) or None
         sudo_password = ""
         if provider == "open5gs":
             unit = DEFAULT_OPEN5GS_SYSTEMD_UNITS.get(compId, f"open5gs-{compId}d")
@@ -1041,17 +1050,31 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
         # Run connect in thread to avoid blocking event loop
         loop = asyncio.get_running_loop()
         def _connect():
-            client.connect(
+            connect_kwargs = dict(
                 hostname=ssh_host,
                 port=ssh_port,
                 username=ssh_user,
-                password=ssh_password,
                 timeout=10,
                 banner_timeout=10,
                 auth_timeout=10,
                 allow_agent=False,
                 look_for_keys=False,
             )
+            if ssh_key_path:
+                # publickey-only host (mis. node core 10.91.2.151)
+                pkey = None
+                for _cls in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey):
+                    try:
+                        pkey = _cls.from_private_key_file(ssh_key_path)
+                        break
+                    except Exception:
+                        continue
+                if pkey is None:
+                    raise RuntimeError(f"gagal load private key {ssh_key_path}")
+                connect_kwargs["pkey"] = pkey
+            else:
+                connect_kwargs["password"] = ssh_password
+            client.connect(**connect_kwargs)
         await loop.run_in_executor(None, _connect)
         await ws.send_text(f"[connected] streaming {mode} logs for {domain}/{provider}/{compId} tail={tail} via {ssh_host}...\n")
         # Exec command — get channel for streaming
