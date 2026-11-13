@@ -238,12 +238,15 @@ def activate_provider(
     `provider_active`. Client HARUS deactivate dulu sebelum activate provider
     baru. Re-activate provider yang sama tetap idempotent (200).
 
-    Domain "ran" (ditambahkan 5 Nov 2026): SEKARANG actuation NYATA, bukan
-    cuma bookkeeping DB — reuse ran_hybrid.connect_ran_to_core() (stop kedua
-    unit gNB -> retarget AMF -> start unit terpilih -> verifikasi SCTP), sama
-    persis logika yang dipakai /api/ran/connect. Core default "open5gs"
-    (satu-satunya provider Core live di testbed ini). Domain "core" MASIH
-    bookkeeping-only (cuma 1 provider live, belum ada switching nyata)."""
+    Domain "ran" (ditambahkan 5 Nov 2026): actuation NYATA — reuse
+    ran_hybrid.connect_ran_to_core() (stop kedua unit gNB -> retarget AMF ->
+    start unit terpilih -> verifikasi SCTP).
+
+    Domain "core" (ditambahkan 13 Nov 2026, setelah root cause dataplane UPF
+    OAI diperbaiki): JUGA actuation NYATA — reuse
+    core_hybrid.switch_core_provider() (stop Core lama penuh -> verifikasi
+    port 38412/8805/2152 kosong -> start Core terpilih -> verifikasi AMF
+    listen, rollback otomatis kalau gagal)."""
     providers = DOMAINS.get(domain)
     if not providers:
         raise HTTPException(404, f"Unknown domain '{domain}'")
@@ -272,8 +275,9 @@ def activate_provider(
                         f"'{body.provider}'.",),
                 },
             )
-    # Actuation NYATA utk domain "ran": nyalakan gNB via SSH sebelum DB ditulis
-    # (DB cuma di-commit kalau actuation sukses, supaya DB tidak pernah bohong).
+    # Actuation NYATA utk domain "ran"/"core": nyalakan gNB/Core via SSH
+    # sebelum DB ditulis (DB cuma di-commit kalau actuation sukses, supaya
+    # DB tidak pernah bohong soal apa yang beneran jalan di testbed).
     amf_addr_set = None
     if domain == "ran":
         from ran_hybrid import connect_ran_to_core, _RAN_CONNECT_LOCK
@@ -284,6 +288,14 @@ def activate_provider(
             amf_addr_set = result.get("ran", {}).get("amf_addr_set", "")
         finally:
             _RAN_CONNECT_LOCK.release()
+    elif domain == "core":
+        from core_hybrid import switch_core_provider, _CORE_SWITCH_LOCK
+        if not _CORE_SWITCH_LOCK.acquire(blocking=False):
+            raise HTTPException(409, "another_core_switch_in_progress")
+        try:
+            switch_core_provider(body.provider, current_user, dry_run=False)
+        finally:
+            _CORE_SWITCH_LOCK.release()
     with get_db_session() as db:
         row = db.query(ActiveProviderModel).filter(ActiveProviderModel.domain == domain).first()
         now = time.time()

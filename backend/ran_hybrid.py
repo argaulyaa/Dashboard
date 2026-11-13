@@ -51,9 +51,22 @@ CORE_RAN_MAP = {
         "probe_unit": "open5gs-amfd",
     },
     "oai": {
-        "live": False,
-        "kind": "unsupported",
-        "reason": "OAI 5G Core PENDING — Docker compose OAI ingin bind port host yang sama dengan Open5GS yang sedang live (AMF 10.91.2.151:38412/sctp, SMF :8805/udp, UPF :2152/udp). Menyalakannya akan bentrok port atau butuh ubah config Open5GS yang sedang jalan. Butuh strategi port/IP terpisah yang disetujui dulu.",
+        # [UPDATE 13 Nov 2026] Root cause dataplane UPF ditemukan & diperbaiki
+        # (bridge-network silent-drop GTP -> network_mode: host), diverifikasi
+        # end-to-end (speedtest ~25 Mbps UE fisik). OAI Core SEKARANG live di
+        # host core yang SAMA (10.91.2.151), docker compose `oai-cn5g-fed`.
+        # amf_ip/port SAMA dengan open5gs karena exclusive (gantian, 1 yang
+        # bind port host di satu waktu) — lihat backend/core_hybrid.py.
+        "live": True,
+        "kind": "docker",
+        "amf_ip": "10.91.2.151",
+        "amf_port": 38412,
+        "ssh_host_env": "OPEN5GS_SYSTEMD_SSH_HOST",
+        "ssh_user_env": "OPEN5GS_SYSTEMD_SSH_USER",
+        "ssh_password_env": "OPEN5GS_SYSTEMD_SSH_PASSWORD",
+        "ssh_key_env": "OPEN5GS_SYSTEMD_SSH_KEY_PATH",
+        "ssh_port_env": "OPEN5GS_SYSTEMD_SSH_PORT",
+        "probe_container": "oai-amf",
     },
 }
 
@@ -132,8 +145,8 @@ def _ran_ssh_creds():
 
 
 def core_status_snapshot():
-    """Status tiap provider Core — bare-metal: systemctl is-active + SCTP
-    listen di :38412 (ganti total dari `kubectl get deploy` versi lama)."""
+    """Status tiap provider Core — bare-metal: systemctl is-active (Open5GS)
+    atau docker inspect (OAI, kind='docker') + SCTP listen di :38412."""
     res = {}
     for key, info in CORE_RAN_MAP.items():
         if not info.get("live"):
@@ -141,14 +154,24 @@ def core_status_snapshot():
             continue
         try:
             host, user, password, port, key_path = _core_ssh_creds(key)
-            unit = info["probe_unit"]
-            cmd = (
-                f"systemctl is-active {unit} 2>&1; echo __S1__; "
-                f"ss --sctp -an 2>/dev/null | grep -c ':{info['amf_port']} '"
-            )
-            out, err, code = _ssh_exec(host, user, password, port, cmd, key_path=key_path, timeout=15)
-            active_part, _, listen_part = out.partition("__S1__")
-            is_active = active_part.strip() == "active"
+            if info.get("kind") == "docker":
+                container = info["probe_container"]
+                cmd = (
+                    f"docker inspect {container} --format '{{{{.State.Status}}}}' 2>&1; echo __S1__; "
+                    f"ss --sctp -an 2>/dev/null | grep -c ':{info['amf_port']} '"
+                )
+                out, err, code = _ssh_exec(host, user, password, port, cmd, key_path=key_path, timeout=15)
+                active_part, _, listen_part = out.partition("__S1__")
+                is_active = active_part.strip() == "running"
+            else:
+                unit = info["probe_unit"]
+                cmd = (
+                    f"systemctl is-active {unit} 2>&1; echo __S1__; "
+                    f"ss --sctp -an 2>/dev/null | grep -c ':{info['amf_port']} '"
+                )
+                out, err, code = _ssh_exec(host, user, password, port, cmd, key_path=key_path, timeout=15)
+                active_part, _, listen_part = out.partition("__S1__")
+                is_active = active_part.strip() == "active"
             listen_count = 0
             try:
                 listen_count = int(listen_part.strip() or 0)
