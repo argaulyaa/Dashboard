@@ -379,13 +379,14 @@ class SshDockerCoreAdapter(DockerCoreAdapter):
     CACHE_TTL = 2.5  # detik; telemetry push tiap 3 detik, hindari spam SSH
 
     def __init__(self, container_map: dict, ssh_host: str, ssh_user: str,
-                 ssh_password: str, ssh_port: int = 22):
+                 ssh_password: str, ssh_port: int = 22, ssh_key_path: Optional[str] = None):
         self._map = container_map
         self._ssh = {
             "host": ssh_host,
             "port": ssh_port,
             "user": ssh_user,
             "password": ssh_password,
+            "key_path": ssh_key_path,  # publickey-only host (mis. node core 10.91.2.151)
         }
         self._conn = None          # paramiko client persistent (lazy connect)
         self._cache: dict = {}     # comp_id -> dict komponen
@@ -534,14 +535,26 @@ class SshDockerCoreAdapter(DockerCoreAdapter):
         if conn is None or not conn.get_transport() or not conn.get_transport().is_active():
             conn = paramiko.SSHClient()
             conn.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            conn.connect(
-                hostname=self._ssh["host"],
-                port=self._ssh["port"],
-                username=self._ssh["user"],
-                password=self._ssh["password"],
-                timeout=8,
-                banner_timeout=10,
-            )
+            key_path = self._ssh.get("key_path")
+            if key_path:
+                pkey = paramiko.Ed25519Key.from_private_key_file(key_path)
+                conn.connect(
+                    hostname=self._ssh["host"],
+                    port=self._ssh["port"],
+                    username=self._ssh["user"],
+                    pkey=pkey,
+                    timeout=8,
+                    banner_timeout=10,
+                )
+            else:
+                conn.connect(
+                    hostname=self._ssh["host"],
+                    port=self._ssh["port"],
+                    username=self._ssh["user"],
+                    password=self._ssh["password"],
+                    timeout=8,
+                    banner_timeout=10,
+                )
             self._conn = conn
         _, stdout, stderr = conn.exec_command(cmd, timeout=20)
         out = stdout.read().decode("utf-8", errors="replace")
@@ -2752,21 +2765,19 @@ def _build_core_providers() -> dict:
     default provider dapat live update via WebSocket telemetry.
     Provider lain diambil sekali via REST saat tab-nya diklik di frontend.
 
-    Testbed sekarang murni bare-metal 3 PC, tanpa Kubernetes/Docker untuk
-    Core (lihat DOKUMENTASI-PROYEK-DASHBOARD-ORAN-KONTEKS-AGENT.md §4.5/§9).
-    Hanya SATU provider Core terdaftar di sini: Open5GS systemd (nyata).
-    Provider mock lama (OAI K8s/Docker-legacy, open5gs K8s/Docker-legacy)
-    sengaja DIHAPUS dari registry per 3 Nov 2026 — tidak ada clustering lagi,
-    jadi tidak ada lagi beda "native" vs "bare-metal" yang perlu dilabeli.
-    Kode adapter K8s/Docker (KubectlOaiCoreAdapter, SshDockerCoreAdapter, dst)
-    TETAP ADA di file ini untuk dipakai lagi kapan pun kalau OAI Core
-    disambungkan tanpa bentrok port dengan Open5GS — lihat catatan "OAI 5G
-    Core: PENDING" di bawah (belum bisa tanpa relokasi port SCTP 38412 /
-    UDP 2152 / 8805 yang sudah dipakai Open5GS bare-metal).
+    Testbed sekarang murni bare-metal 3 PC. Core punya DUA provider yang bisa
+    dipilih dari dashboard: Open5GS (systemd) dan OAI 5G Core (Docker compose,
+    `oai-cn5g-fed`, UPF `network_mode: host` — lihat skill
+    openran-dashboard-testbed utk root cause & fix dataplane-nya). Keduanya
+    EXCLUSIVE secara fisik (bind port host yang sama: AMF 38412/sctp, SMF/N4
+    8805/udp, UPF/N3 2152/udp di 10.91.2.151) — exclusive switching NYATA
+    (stop satu penuh, verifikasi port kosong, start yang lain) ditangani oleh
+    backend/core_hybrid.py::switch_core_provider(), dipanggil dari endpoint
+    POST /api/core/activate-provider (lihat main.py).
     """
     providers = {}
 
-    # --- Open5GS bare-metal via systemd (node `core`, 10.91.2.151) — SATU-SATUNYA provider Core ---
+    # --- Open5GS bare-metal via systemd (node `core`, 10.91.2.151) ---
     systemd_host = os.environ.get("OPEN5GS_SYSTEMD_SSH_HOST", "") or None
     if systemd_host:
         try:
@@ -2802,17 +2813,38 @@ def _build_core_providers() -> dict:
         "adapter": adapter_systemd,
     }
 
-    # --- OAI 5G Core: PENDING, belum disambungkan ---
-    # OAI (Docker compose) ingin bind port host yang SAMA dengan Open5GS yang
-    # sedang live: AMF 10.91.2.151:38412/sctp, SMF :8805/udp, UPF :2152/udp
-    # (lihat /home/core/oai-cn5g-fed/docker-compose/docker-compose-telmat-
-    # hostip.yaml). Open5GS systemd sudah LISTEN di port-port itu sekarang —
-    # menyalakan OAI Docker akan gagal bind (port already in use) ATAU butuh
-    # mengubah port/konfigurasi salah satu Core, yang berarti mempengaruhi
-    # Open5GS yang sedang jalan. Diputuskan PENDING per instruksi pemilik
-    # (3 Nov 2026) — jangan diaktifkan tanpa strategi port terpisah yang
-    # disetujui (mis. VLAN/IP kedua di node core, atau jadwal bergantian
-    # seperti RAN/gNB).
+    # --- OAI 5G Core via Docker compose (node `core`, SAME host 10.91.2.151) ---
+    # Dikembalikan ke registry 13 Nov 2026 setelah root cause dataplane UPF
+    # ditemukan & diperbaiki (bridge-network silent-drop -> network_mode:
+    # host) dan diverifikasi end-to-end (speedtest ~25 Mbps di UE fisik).
+    # Container di-SSH ke node core yang SAMA dengan Open5GS (publickey-only,
+    # reuse OPEN5GS_SYSTEMD_SSH_* env) karena kedua stack hidup di satu host,
+    # bergantian (exclusive port 38412/8805/2152 — lihat core_hybrid.py).
+    if systemd_host:
+        try:
+            adapter_oai = SshDockerCoreAdapter(
+                container_map=dict(DEFAULT_OAI_K8S_COMPONENT_MAP),  # nama container sama persis
+                ssh_host=systemd_host,
+                ssh_user=os.environ.get("OPEN5GS_SYSTEMD_SSH_USER", "core"),
+                ssh_password=os.environ.get("OPEN5GS_SYSTEMD_SSH_PASSWORD", ""),
+                ssh_port=int(os.environ.get("OPEN5GS_SYSTEMD_SSH_PORT", "22")),
+                ssh_key_path=os.environ.get("OPEN5GS_SYSTEMD_SSH_KEY_PATH", "") or None,
+            )
+            oai_desc = "OAI 5G Core — AMF/SMF/UPF/NRF/UDR/AUSF/UDM (Docker, UPF network_mode:host, exclusive dgn Open5GS)"
+        except Exception as e:
+            print(f"[oai-core] fallback mock due to {e}", flush=True)
+            adapter_oai = CoreAdapter()
+            oai_desc = "OAI 5G Core (fallback mock — env systemd invalid)"
+    else:
+        adapter_oai = CoreAdapter()
+        oai_desc = "OAI 5G Core (mock — isi OPEN5GS_SYSTEMD_SSH_HOST untuk data nyata)"
+
+    providers["oai"] = {
+        "label": "OAI",
+        "icon": "cloud",
+        "desc": oai_desc,
+        "adapter": adapter_oai,
+    }
 
     return providers
 
