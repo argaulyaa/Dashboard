@@ -1050,7 +1050,7 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
         # Run connect in thread to avoid blocking event loop
         loop = asyncio.get_running_loop()
         def _connect():
-            connect_kwargs = dict(
+            connect_kwargs: dict = dict(
                 hostname=ssh_host,
                 port=ssh_port,
                 username=ssh_user,
