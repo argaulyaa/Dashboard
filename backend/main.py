@@ -745,8 +745,17 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
     inner_cmd = None
     mode = None
 
-    if domain == "core" and provider in ("oai", "open5gs", "k8s"):
-        # Prefer K8s via master (master holds admin.conf) — provider-aware ns/prefix
+    if domain == "core" and provider == "k8s":
+        # Provider "k8s" legacy tidak terdaftar lagi di registry sejak migrasi
+        # bare-metal (3 Nov 2026) — blok ini praktis dead code, dibiarkan utk
+        # kompatibilitas kalau suatu saat k8s balik lagi. Provider real
+        # ("open5gs", "oai") SEKARANG jatuh ke blok `elif domain == "core"`
+        # di bawah (docker logs -f via SSH ke node core 10.91.2.151) —
+        # DIPERBAIKI 13 Nov 2026: sebelumnya guard ini salah mencakup
+        # "oai"/"open5gs" juga, jadi live-log WS selalu nyasar ke cluster
+        # K8s lama (10.91.2.156) yang sudah tidak ada ("Unable to connect
+        # to port 22") untuk KEDUA provider Core, padahal REST get_logs
+        # (lewat adapter._exec) sudah benar duluan.
         k8s_host = os.environ.get("OAI_K8S_SSH_HOST", "") or os.environ.get("K8S_SSH_HOST", "")
         if not k8s_host:
             k8s_host = "10.91.2.156"
@@ -879,26 +888,42 @@ async def ws_logs(ws: WebSocket, domain: str, provider: str, compId: str):
             )
         mode = "k8s"
     elif domain == "core":
-        # Legacy docker via SSH to core node
+        # Bare-metal real path (sejak migrasi 3 Nov 2026): provider-aware,
+        # DIPERBAIKI 13 Nov 2026 — sebelumnya block ini SELALU asumsi docker
+        # (`docker logs -f`), salah untuk Open5GS yang systemd (bukan
+        # container). Sekarang: open5gs -> journalctl -u <unit> -f,
+        # oai -> docker logs -f <container> (tidak berubah).
         ssh_host = os.environ.get("OAI_SSH_HOST", "10.91.2.151")
         ssh_port = int(os.environ.get("OAI_SSH_PORT", "22") or 22)
         ssh_user = os.environ.get("OAI_SSH_USER", "core") or "core"
         ssh_password = os.environ.get("OAI_SSH_PASSWORD", "telmat123") or "telmat123"
         sudo_password = ""
-        container = compId
-        try:
-            if hasattr(adapter, "_map") and compId in adapter._map:
-                v = adapter._map[compId]
-                container = v if isinstance(v, str) else v.get("deploy", compId)
-            else:
-                raw = os.environ.get("OAI_CORE_CONTAINERS", "")
-                if raw:
-                    import json as _j
-                    m = _j.loads(raw)
-                    container = m.get(compId, compId)
-        except Exception:
-            pass
-        inner_cmd = f"docker logs -f --tail {tail} --timestamps {_sh_quote(container)} 2>&1"
+        if provider == "open5gs":
+            unit = DEFAULT_OPEN5GS_SYSTEMD_UNITS.get(compId, f"open5gs-{compId}d")
+            try:
+                if hasattr(adapter, "_units") and compId in getattr(adapter, "_units"):
+                    unit = adapter._units[compId]
+            except Exception:
+                pass
+            sudo_password = os.environ.get("OPEN5GS_SYSTEMD_SUDO_PASSWORD", "") or ssh_password
+            _jcmd = f"journalctl -u {_sh_quote(unit)} -n {tail} -f --no-pager -o short-iso 2>&1"
+            # journalctl baca log systemd biasanya butuh root di testbed ini
+            inner_cmd = f"echo {_sh_quote(sudo_password)} | sudo -S -p '' bash -c {_sh_quote(_jcmd)}"
+        else:
+            container = compId
+            try:
+                if hasattr(adapter, "_map") and compId in adapter._map:
+                    v = adapter._map[compId]
+                    container = v if isinstance(v, str) else v.get("deploy", compId)
+                else:
+                    raw = os.environ.get("OAI_CORE_CONTAINERS", "")
+                    if raw:
+                        import json as _j
+                        m = _j.loads(raw)
+                        container = m.get(compId, compId)
+            except Exception:
+                pass
+            inner_cmd = f"docker logs -f --tail {tail} --timestamps {_sh_quote(container)} 2>&1"
         mode = "docker"
     elif domain == "ran":
         ssh_host = os.environ.get("OAI_SSH_RAN_HOST", os.environ.get("SRSRAN_SSH_HOST", "10.91.2.152"))
