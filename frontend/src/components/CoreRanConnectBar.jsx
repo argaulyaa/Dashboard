@@ -105,7 +105,7 @@ export default function CoreRanConnectBar() {
       const res = await connectRan(coreSel, ranSel, false);
       const estab = res.ran?.sctp_estab ?? res.sctp_estab;
       const am = res.ran?.amf_addr_set || "";
-      setMsg(`${res.status === "connected" ? "CONNECTED" : "STARTED"}: Core ${res.core?.active_ns} (${res.core?.svc}) -> RAN ${res.ran?.unit} AMF ${am} | SCTP ${estab ? "ESTAB" : "PENDING"}`);
+      setMsg(`${res.status === "connected" ? "CONNECTED" : "STARTED"}: Core ${res.core?.provider ?? coreSel} (AMF ${res.core?.amf_ip ?? ""}:${res.core?.amf_port ?? ""}) -> RAN ${res.ran?.unit} AMF ${am} | SCTP ${estab ? "ESTAB" : "PENDING"}`);
       setMsgErr(false);
       setTimeout(pollStatus, 1500);
     } catch (e) {
@@ -122,7 +122,7 @@ export default function CoreRanConnectBar() {
     setBusy(true); setMsg(""); setMsgErr(false);
     try {
       const res = await disconnectRan(coreSel, ranSel);
-      setMsg(`DISCONNECTED: Core ${res.core?.active_ns} (${res.core?.svc}) scaled to 0, RAN ${res.ran?.unit} stopped | SCTP ${res.sctp_estab ? "ESTAB" : "CLOSED"}`);
+      setMsg(`DISCONNECTED: RAN ${res.ran?.unit} stopped | Core ${res.core?.provider ?? coreSel} tetap jalan (${res.core?.action ?? "tidak disentuh"}) | SCTP ${res.sctp_estab ? "ESTAB" : "CLOSED"}`);
       setMsgErr(false);
       setTimeout(pollStatus, 1500);
     } catch (e) {
