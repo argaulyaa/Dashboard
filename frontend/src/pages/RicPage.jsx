@@ -300,7 +300,7 @@ export default function RicPage({ components, ranComponents = [], currentUser, o
               WEBSOCKET STREAM (/ws/telemetry)
             </div>
           </div>
-          <div className="p-4 font-mono text-code-md h-64 overflow-y-auto bg-inverse-surface text-surface-container-low rounded-b-xl">
+          <div className="p-4 font-mono text-code-md h-64 overflow-y-auto bg-[#0e1420] text-slate-200 rounded-b-xl">
             <div className="space-y-1">
               {logLines.length === 0 && <p className="opacity-60">No data available.</p>}
               {logLines.map((l) => (
