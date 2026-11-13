@@ -13,7 +13,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depe
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from ssh_proxy import run_ssh_bridge
-from adapters import DOMAIN_PROVIDERS, DEFAULT_OAI_K8S_COMPONENT_MAP
+from adapters import DOMAIN_PROVIDERS, DEFAULT_OAI_K8S_COMPONENT_MAP, DEFAULT_OPEN5GS_SYSTEMD_UNITS
 
 # Map untuk open5gs: deployment prefix per component (helm chart open5gs-chart -> open5gs-amf)
 # dipakai ws_logs untuk open5gs agar tidak salah pakai prefix oai-amf / ns 5g-core
