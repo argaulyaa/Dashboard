@@ -11,7 +11,7 @@ load_dotenv()
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from ssh_proxy import run_ssh_bridge
 from adapters import DOMAIN_PROVIDERS, DEFAULT_OAI_K8S_COMPONENT_MAP, DEFAULT_OPEN5GS_SYSTEMD_UNITS
 
@@ -172,6 +172,90 @@ class ConfirmPasswordResetRequest(BaseModel):
 class ActivateProviderRequest(BaseModel):
     """Payload aktivasi provider untuk satu domain (mis. domain='core')."""
     provider: str
+
+
+# ---- Mobile device remote-control via ADB (direkonstruksi 24 Nov 2026) ----
+# CATATAN PENTING: section ini bukan pulihan verbatim. Kerjaan asli (WIP,
+# belum di-commit oleh pembuatnya) KETIMPA nggak sengaja saat agent overwrite
+# backend/main.py tanpa cek `git status` working tree server dulu (lihat
+# skill openran-dashboard-testbed utk root-cause lengkap). Direkonstruksi
+# dari introspeksi /openapi.json proses live yang masih jalan (belum
+# direstart saat insiden terjadi, jadi route lama masih kebaca) + isi
+# mobile_devices.py yang masih utuh di disk (file itu nggak ketimpa).
+# WAJIB direview oleh pembuat asli begitu dia online lagi.
+import mobile_devices as _mobile_devices
+
+
+class AirplaneModeRequest(BaseModel):
+    enabled: bool
+
+
+class DeviceTextRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
+
+
+class DeviceKeyRequest(BaseModel):
+    key: str
+
+
+class DeviceTapRequest(BaseModel):
+    x: float = Field(..., ge=0.0, le=1.0)
+    y: float = Field(..., ge=0.0, le=1.0)
+
+
+def _mobile_device_response(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except _mobile_devices.ADBError as e:
+        raise HTTPException(e.status_code, str(e))
+
+
+@app.get("/api/devices")
+def get_mobile_devices(current_user: str = Depends(require_user)):
+    return _mobile_device_response(_mobile_devices.list_devices)
+
+
+@app.get("/api/devices/{serial}")
+def get_mobile_device(serial: str, current_user: str = Depends(require_user)):
+    return _mobile_device_response(_mobile_devices.get_device_info, serial)
+
+
+@app.post("/api/devices/{serial}/wake")
+def wake_mobile_device(serial: str, current_user: str = Depends(require_user)):
+    _mobile_device_response(_mobile_devices.wake_screen, serial)
+    return {"ok": True}
+
+
+@app.post("/api/devices/{serial}/airplane-mode")
+def set_mobile_airplane_mode(
+    serial: str, body: AirplaneModeRequest, current_user: str = Depends(require_user)
+):
+    _mobile_device_response(_mobile_devices.set_airplane_mode, serial, body.enabled)
+    return {"ok": True}
+
+
+@app.post("/api/devices/{serial}/input/text")
+def send_mobile_text(
+    serial: str, body: DeviceTextRequest, current_user: str = Depends(require_user)
+):
+    _mobile_device_response(_mobile_devices.send_text, serial, body.text)
+    return {"ok": True}
+
+
+@app.post("/api/devices/{serial}/input/key")
+def send_mobile_key(
+    serial: str, body: DeviceKeyRequest, current_user: str = Depends(require_user)
+):
+    _mobile_device_response(_mobile_devices.send_key, serial, body.key)
+    return {"ok": True}
+
+
+@app.post("/api/devices/{serial}/input/tap")
+def tap_mobile_screen(
+    serial: str, body: DeviceTapRequest, current_user: str = Depends(require_user)
+):
+    _mobile_device_response(_mobile_devices.tap_screen, serial, body.x, body.y)
+    return {"ok": True}
 
 
 def _get_adapter(domain: str, provider: str = None):
