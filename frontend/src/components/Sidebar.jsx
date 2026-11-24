@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { to: "/core", label: "Core", icon: "memory" },
   { to: "/ran", label: "RAN", icon: "settings_input_antenna" },
   { to: "/ric", label: "RIC", icon: "lan" },
+  { to: "/remote-devices", label: "Remote Devices", icon: "phonelink" },
   { to: "/reservations", label: "Reservation", icon: "event_available" },
   { to: "/audit-logs", label: "Audit Logs", icon: "shield" },
 ];

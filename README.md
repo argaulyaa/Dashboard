@@ -39,6 +39,21 @@ npm run dev
 Buka `http://localhost:5173`. Vite sudah dikonfigurasi untuk proxy
 `/api` dan `/ws` ke backend di port 8000 (lihat `vite.config.js`).
 
+## Remote Android devices
+
+Halaman **Remote Devices** menggunakan ADB yang terpasang pada host backend.
+Hubungkan perangkat milik/yang berwenang Anda kelola melalui USB atau ADB
+TCP/IP, aktifkan USB debugging, dan setujui dialog otorisasi pada perangkat.
+Pastikan `adb devices` menampilkan status `device` untuk perangkat tersebut.
+Jika executable ADB tidak ada di `PATH`, set `ADB_PATH` sebelum menjalankan
+backend.
+
+Stream layar menggunakan snapshot PNG berulang (sekitar 2 frame/detik).
+Klik layar untuk tap, fokuskan stream lalu gunakan keyboard, atau kirim teks
+dari panel keyboard. Perintah bangunkan layar dan mode pesawat bergantung pada
+dukungan/perizinan versi Android. Endpoint perangkat hanya tersedia untuk user
+yang sudah login.
+
 ## Cara kerja saat ini (mock)
 
 - `backend/adapters.py` punya tiga adapter: `CoreAdapter`, `RanAdapter`,

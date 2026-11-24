@@ -467,3 +467,75 @@ export async function disconnectRan(coreProvider, ranProvider) {
   }
   return data;
 }
+
+// ---- Remote Android devices (ADB on the backend host) ----
+async function deviceRequest(path, options = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    headers: { ...authHeaders(), ...options.headers },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : "Device request failed.");
+  }
+  return data;
+}
+
+const devicePath = (serial) => `/devices/${encodeURIComponent(serial)}`;
+
+export function fetchMobileDevices() {
+  return deviceRequest("/devices");
+}
+
+export function fetchMobileDeviceInfo(serial) {
+  return deviceRequest(devicePath(serial));
+}
+
+export function wakeMobileDevice(serial) {
+  return deviceRequest(`${devicePath(serial)}/wake`, { method: "POST" });
+}
+
+export function setMobileAirplaneMode(serial, enabled) {
+  return deviceRequest(`${devicePath(serial)}/airplane-mode`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function sendMobileText(serial, text) {
+  return deviceRequest(`${devicePath(serial)}/input/text`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+}
+
+export function sendMobileKey(serial, key) {
+  return deviceRequest(`${devicePath(serial)}/input/key`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key }),
+  });
+}
+
+export function tapMobileScreen(serial, x, y) {
+  return deviceRequest(`${devicePath(serial)}/input/tap`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ x, y }),
+  });
+}
+
+export function openMobileScreenSocket(serial) {
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  const host =
+    window.location.port === "5173"
+      ? `${window.location.hostname}:8000`
+      : window.location.host;
+  const token = getToken();
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  return new WebSocket(
+    `${proto}://${host}${WS_BASE}/devices/${encodeURIComponent(serial)}/screen${query}`
+  );
+}

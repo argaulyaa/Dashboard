@@ -6,7 +6,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# System deps (minimal; paramiko is pure-python, no extra system libs needed)
+# ADB is used by the authenticated remote-device endpoints.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends adb \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
