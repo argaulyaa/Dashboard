@@ -5,6 +5,7 @@ import { getRole } from "../user.js";
 const ITEMS = [
   { to: "/", label: "Overview", icon: "dashboard", end: true },
   { to: "/ran", label: "Nodes", icon: "router" },
+  { to: "/remote-devices", label: "Devices", icon: "phonelink" },
   { to: "/ric", label: "RIC", icon: "hub" },
   { to: "/reservations", label: "Book", icon: "calendar_today" },
   { to: "/audit-logs", label: "Audit", icon: "shield" },
@@ -21,14 +22,14 @@ export default function MobileNav({ currentUser }) {
   });
 
   return (
-    <nav className="fixed bottom-0 w-full md:hidden z-50 bg-surface border-t border-outline-variant shadow-[0_-4px_12px_rgba(0,0,0,0.06)] flex justify-around items-center h-16 px-4">
+    <nav className="fixed bottom-0 w-full md:hidden z-50 bg-surface border-t border-outline-variant shadow-[0_-4px_12px_rgba(0,0,0,0.06)] flex justify-start gap-1 overflow-x-auto items-center h-16 px-2">
       {visibleItems.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
           end={item.end}
           className={({ isActive }) =>
-            `flex flex-col items-center justify-center rounded-xl px-3 py-1 ${
+            `flex shrink-0 flex-col items-center justify-center rounded-xl px-3 py-1 ${
               isActive ? "bg-primary-container text-white" : "text-on-surface-variant"
             }`
           }

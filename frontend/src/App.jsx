@@ -19,6 +19,7 @@ import Profile from "./pages/Profile.jsx";
 import Register from "./pages/Register.jsx";
 import VerifyEmail from "./pages/VerifyEmail.jsx";
 import AuditLogs from "./pages/AuditLogs.jsx";
+import RemoteDevices from "./pages/RemoteDevices.jsx";
 import { isAuthenticated, logout, fetchMe } from "./auth.js";
 
 // const DOMAIN_META = {
@@ -296,6 +297,8 @@ const handleLogout = useCallback(() => {
                 )
               }
             />
+
+            <Route path="/remote-devices" element={<RemoteDevices />} />
 
             <Route
               path="/ssh/:domain/:componentId"
