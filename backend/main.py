@@ -211,20 +211,57 @@ def list_providers(domain: str):
 
 @app.get("/api/{domain}/active-provider")
 def get_active_provider(domain: str, current_user: str = Depends(require_user)):
-    """Provider yang sedang aktif untuk domain ini (atau null jika tidak ada)."""
+    """Provider yang sedang aktif untuk domain ini (atau null jika tidak ada).
+
+    Ditambah 24 Nov 2026 - auto-reconcile terhadap kondisi FISIK nyata setiap
+    kali endpoint ini dipoll (frontend poll tiap beberapa detik), biar drift
+    DB bookkeeping vs kondisi fisik (switch manual via SSH, bukan lewat
+    tombol dashboard) kekoreksi otomatis tanpa intervensi manual. Kalau cek
+    status fisik gagal (unknown) atau kedua provider somehow aktif bersamaan
+    (conflict, ambigu) -> DB TIDAK disentuh, cuma dikasih flag di response
+    biar frontend bisa nampilin warning."""
     if domain not in DOMAINS:
         raise HTTPException(404, f"Unknown domain '{domain}'")
+    physical, conflict, unknown = None, False, True
+    try:
+        if domain == "core":
+            from core_hybrid import reconcile_physical_provider as _reconcile_core
+            physical, conflict, unknown = _reconcile_core()
+        elif domain == "ran":
+            from ran_hybrid import reconcile_physical_provider as _reconcile_ran
+            physical, conflict, unknown = _reconcile_ran()
+    except Exception:
+        physical, conflict, unknown = None, False, True
     with get_db_session() as db:
         row = db.query(ActiveProviderModel).filter(ActiveProviderModel.domain == domain).first()
+        db_provider = row.provider if row else None
+        if not unknown and not conflict and physical != db_provider:
+            if physical is None:
+                if row:
+                    db.delete(row)
+                    row = None
+            elif row:
+                row.provider = physical
+                row.username = "auto-reconcile"
+                row.activated_at = time.time()
+            else:
+                row = ActiveProviderModel(
+                    domain=domain, provider=physical,
+                    username="auto-reconcile", activated_at=time.time(),
+                )
+                db.add(row)
         # Baca atribut DI DALAM sesi — akses setelah close -> DetachedInstanceError
         data = row.to_dict() if row else None
     if not data:
-        return {"provider": None, "username": None, "activated_at": None}
-    return {
-        "provider": data["provider"],
-        "username": data["username"],
-        "activated_at": data["activated_at"],
-    }
+        result = {"provider": None, "username": None, "activated_at": None}
+    else:
+        result = {
+            "provider": data["provider"],
+            "username": data["username"],
+            "activated_at": data["activated_at"],
+        }
+    result["conflict"] = conflict
+    return result
 
 
 @app.post("/api/{domain}/activate-provider")
