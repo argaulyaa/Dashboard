@@ -252,6 +252,30 @@ def ran_status_snapshot():
         return {"error": str(e)[:500], "sctp_estab": 0, "sctp_lines": []}
 
 
+def reconcile_physical_provider():
+    """Ditambah 24 Nov 2026 - versi RAN dari core_hybrid.reconcile_physical_provider:
+    deteksi drift antara DB bookkeeping (domain='ran') & kondisi fisik nyata
+    (switch manual via SSH yang nggak lewat tombol dashboard). Dipanggil tiap
+    GET /api/ran/active-provider diakses (frontend poll tiap beberapa detik).
+
+    Return (physical_provider_or_None, conflict: bool, unknown: bool) — sama
+    semantik dengan versi core: unknown->SSH gagal jangan sentuh DB,
+    conflict->kedua gNB somehow nyala bareng (ambigu) jangan auto-pilih.
+    """
+    status = ran_status_snapshot()
+    if "error" in status:
+        return None, False, True
+    srs_active = status.get("srsgnb_active", "").strip() == "active"
+    oai_active = status.get("oai_gnb_active", "").strip() == "active"
+    if srs_active and oai_active:
+        return None, True, False
+    if srs_active:
+        return "srsran", False, False
+    if oai_active:
+        return "oai", False, False
+    return None, False, False
+
+
 # ---------------------------------------------------------------------------
 # Retarget AMF di config RAN — python re.sub via SSH, BUKAN sed -i (guardrail
 # AGENTS.md: sed -i pernah merusak YAML -> UPF crash / AMF PLMN reject).

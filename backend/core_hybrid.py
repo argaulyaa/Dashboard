@@ -116,6 +116,34 @@ def _current_physical_provider(status: dict):
     return None
 
 
+def reconcile_physical_provider():
+    """Ditambah 24 Nov 2026 - deteksi drift antara DB bookkeeping & kondisi
+    fisik nyata Core (misal ada yang switch manual via SSH, bukan lewat
+    tombol dashboard, jadi DB ketinggalan). Dipanggil setiap kali endpoint
+    GET /api/core/active-provider diakses (frontend poll tiap beberapa
+    detik), supaya drift kekoreksi otomatis tanpa perlu intervensi manual.
+
+    Return (physical_provider_or_None, conflict: bool, unknown: bool).
+    - unknown=True kalau SSH/cek status gagal -> JANGAN sentuh DB, nggak ada
+      cukup info buat mastiin kondisi fisik beneran.
+    - conflict=True kalau Open5GS DAN OAI somehow jalan bersamaan (harusnya
+      exclusive) -> JANGAN auto-pilih salah satu (ambigu), biarin DB apa
+      adanya & biar user cek manual.
+    """
+    status = core_provider_status()
+    if "error" in status:
+        return None, False, True
+    open5gs_active = status["open5gs"]["status"] == "active"
+    oai_active = status["oai"]["status"] == "running"
+    if open5gs_active and oai_active:
+        return None, True, False
+    if open5gs_active:
+        return "open5gs", False, False
+    if oai_active:
+        return "oai", False, False
+    return None, False, False
+
+
 def _stop_provider(host, user, password, port, key_path, provider, actions):
     if provider == "open5gs":
         cmd = "sudo systemctl stop " + " ".join(OPEN5GS_UNITS) + " 2>&1; echo __CODE__$?"
